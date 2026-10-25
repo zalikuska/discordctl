@@ -30,8 +30,9 @@ fn changed_names(buf: &[u8], len: usize) -> Vec<String> {
         if start + name_len > len {
             break;
         }
-        let units: Vec<u16> =
-            buf[start..start + name_len].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        // Не `chunks_exact(2)`: его замена `as_chunks` появилась в Rust 1.88, а мы поддерживаем 1.80.
+        let name = &buf[start..start + name_len];
+        let units: Vec<u16> = (0..name_len / 2).map(|i| u16::from_le_bytes([name[2 * i], name[2 * i + 1]])).collect();
         names.push(String::from_utf16_lossy(&units).to_ascii_lowercase());
         if next == 0 {
             break;
