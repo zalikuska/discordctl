@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- MCP: the daemon itself keeps only the declared fields of an app's call (no `mentions`, `ring` or `audio`, history
+  pages capped), so "no pings" no longer depends on the MCP server being the one that talks to it.
+- MCP: when the agent cancels a call (or disconnects) the daemon drops it from the approval queue instead of asking you
+  about something nobody waits for; one app can have at most 8 calls waiting for approval at a time.
+- MCP: a dead daemon and a revoked token now give different, clear errors, and `tools/list` fails with a message instead
+  of silently returning no tools.
+- MCP: a line with invalid UTF-8 no longer ends the server, and a failing random generator no longer leaves a request
+  unanswered. `tests/mcp-protocol.js` checks the protocol against a sandbox daemon.
+
 - The agent list offers only what is found on the PC (plus "show the settings"); Claude Desktop from the Microsoft
   Store is now detected, and its config is written where that app reads it (inside the package folder).
 

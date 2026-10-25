@@ -21,6 +21,10 @@ use windows_sys::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYS
 
 /// Сколько вызов ждёт решения человека, потом отказ.
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
+/// Как часто во время ожидания проверяем, что приложение ещё на связи.
+const GONE_CHECK: Duration = Duration::from_millis(400);
+/// Сколько вызовов одного приложения может ждать человека одновременно: больше уже спам.
+const MAX_PENDING_PER_APP: usize = 8;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct App {
@@ -192,13 +196,18 @@ pub fn decide(id: u64, allow: bool) -> bool {
 }
 
 /// Блокирует вызов до решения человека (`discordctl approvals`). Тишина дольше срока — отказ.
-fn ask_human(app: &str, summary: String) -> Result<(), &'static str> {
+/// `gone` говорит, что приложение оборвало соединение (отменило вызов или закрылось): спрашивать человека о том,
+/// чего уже никто не ждёт, не нужно, а согласие на такой вызов не должно ничего отправить.
+fn ask_human(app: &str, summary: String, gone: &dyn Fn() -> bool) -> Result<(), &'static str> {
+    let mut p = PENDING.lock().unwrap();
+    if p.iter().filter(|i| i.app == app && i.decision.is_none()).count() >= MAX_PENDING_PER_APP {
+        return Err("too many calls of this app are already waiting for approval");
+    }
     let id = {
         let mut n = NEXT_ID.lock().unwrap();
         *n += 1;
         *n - 1
     };
-    let mut p = PENDING.lock().unwrap();
     p.push(Pending { id, app: app.to_owned(), summary, decision: None });
     let deadline = std::time::Instant::now() + APPROVAL_TIMEOUT;
     let verdict = loop {
@@ -210,7 +219,11 @@ fn ask_human(app: &str, summary: String) -> Result<(), &'static str> {
         if left.is_zero() {
             break None;
         }
-        p = DECIDED.wait_timeout(p, left).unwrap().0;
+        if gone() {
+            p.retain(|i| i.id != id);
+            return Err("the app cancelled the call or disconnected");
+        }
+        p = DECIDED.wait_timeout(p, left.min(GONE_CHECK)).unwrap().0;
     };
     p.retain(|i| i.id != id);
     match verdict {
@@ -282,13 +295,9 @@ fn human_summary(app: &str, method: &str, place: &str, params: &Value) -> String
             params["emoji"].as_str().unwrap_or("?"),
             params["message"].as_str().unwrap_or("?")
         ),
-        "voice_join" => format!(
-            "{app} wants to JOIN the voice channel {place}{}",
-            if params["ring"] == true { " (this may RING people)" } else { "" }
-        ),
+        "voice_join" => format!("{app} wants to JOIN the voice channel {place}"),
         "stream_start" => format!(
-            "{app} wants to START STREAMING {place} to the voice channel you are in. Everyone who can see that channel can watch what is on it{}",
-            if params["audio"] == true { ", WITH SOUND" } else { "" }
+            "{app} wants to START STREAMING {place} to the voice channel you are in. Everyone who can see that channel can watch what is on it (no sound)"
         ),
         "voice_leave" => format!("{app} wants to LEAVE the current voice channel"),
         "voice_mute" => format!("{app} wants to {} your microphone", if params["mute"] == false { "UNMUTE" } else { "MUTE" }),
@@ -297,14 +306,52 @@ fn human_summary(app: &str, method: &str, place: &str, params: &Value) -> String
     }
 }
 
+/// Поля, которые приложение вообще может передать методу. Остальное отбрасывается: токен ограничивает приложение,
+/// и «без пингов», «без звонка людям», «без звука» не должны зависеть от того, что MCP-сервер не передаёт лишнего
+/// (приложение может говорить с демоном напрямую).
+fn allowed_params(method: &str) -> &'static [&'static str] {
+    match method {
+        "channels" => &["guild"],
+        "messages" => &["channel", "limit", "before", "after"],
+        "send" => &["channel", "content", "reply_to", "dry_run"],
+        "edit" => &["channel", "message", "content", "dry_run"],
+        "delete" => &["channel", "message", "dry_run"],
+        "react" => &["channel", "message", "emoji", "remove", "dry_run"],
+        "voice_join" => &["channel", "dry_run"],
+        "voice_leave" | "stream_stop" => &["dry_run"],
+        "voice_mute" => &["mute", "dry_run"],
+        "voice_deafen" => &["deafen", "dry_run"],
+        "stream_start" => &["source", "dry_run"],
+        _ => &[],
+    }
+}
+
+/// Оставляет только разрешённые поля; страница истории ограничена так же, как в MCP-сервере.
+fn sanitize(method: &str, params: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    if let Some(obj) = params.as_object() {
+        for key in allowed_params(method) {
+            if let Some(v) = obj.get(*key).filter(|v| !v.is_null()) {
+                out.insert((*key).to_owned(), v.clone());
+            }
+        }
+    }
+    if method == "messages" {
+        let limit = out.get("limit").and_then(Value::as_u64).unwrap_or(50).clamp(1, 200);
+        out.insert("limit".into(), json!(limit));
+    }
+    Value::Object(out)
+}
+
 /// Проверяет вызов приложения, при необходимости ждёт человека и исполняет. Каждое решение попадает в журнал.
-pub fn app_call(app: &App, method: &str, params: Value) -> Result<Value, String> {
+/// `gone` сообщает, что приложение уже оборвало соединение.
+pub fn app_call(app: &App, method: &str, params: Value, gone: &dyn Fn() -> bool) -> Result<Value, String> {
     let deny = |why: &str, res: Option<&str>| -> Result<Value, String> {
         audit(&app.name, method, res, "denied", why);
         Err(why.to_owned())
     };
     let Some(need) = need(method) else { return deny("method is not available to apps", None) };
-    let mut params = params;
+    let mut params = sanitize(method, &params);
     let mut resource_label: Option<String> = None;
     let mut place = String::new();
     let mut scope: Option<&'static str> = None;
@@ -382,7 +429,7 @@ pub fn app_call(app: &App, method: &str, params: Value) -> Result<Value, String>
     if let Some(sc) = scope {
         if app.permissions.needs_confirmation(sc) && params["dry_run"] != true {
             let summary = human_summary(&app.name, method, &place, &params);
-            if let Err(why) = ask_human(&app.name, summary) {
+            if let Err(why) = ask_human(&app.name, summary, gone) {
                 return deny(why, resource_label.as_deref());
             }
         }
@@ -407,4 +454,65 @@ pub fn app_call(app: &App, method: &str, params: Value) -> Result<Value, String>
 
 fn identify_name(name: &str) -> Option<()> {
     with_store(|s| s.apps.iter().find(|a| a.name == name).map(|_| ()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn apps_cannot_pass_pings_rings_or_sound() {
+        let send =
+            sanitize("send", &json!({ "channel": "c", "content": "hi", "mentions": true, "tts": true, "flags": 4 }));
+        assert_eq!(send, json!({ "channel": "c", "content": "hi" }), "no pings, no extra flags");
+        assert!(sanitize("voice_join", &json!({ "channel": "v", "ring": true })).get("ring").is_none());
+        assert!(sanitize("stream_start", &json!({ "source": "window:1:0", "audio": true })).get("audio").is_none());
+        // Постоянное значение MCP-сервера для реакций проходит, остальное нет.
+        let react =
+            sanitize("react", &json!({ "channel": "c", "message": "1", "emoji": "x", "remove": true, "other": 1 }));
+        assert_eq!(react["remove"], true);
+        assert!(react.get("other").is_none());
+        assert_eq!(sanitize("me", &json!({ "anything": 1 })), json!({}));
+    }
+
+    #[test]
+    fn history_page_is_clamped_in_the_daemon_too() {
+        assert_eq!(sanitize("messages", &json!({ "channel": "c", "limit": 100000 }))["limit"], 200);
+        assert_eq!(sanitize("messages", &json!({ "channel": "c" }))["limit"], 50);
+        assert_eq!(sanitize("messages", &json!({ "channel": "c", "limit": "many" }))["limit"], 50);
+    }
+
+    #[test]
+    fn a_call_whose_app_hung_up_is_dropped_without_asking_anyone() {
+        let started = std::time::Instant::now();
+        let r = ask_human("gone-app-test", "x".into(), &|| true);
+        assert_eq!(r, Err("the app cancelled the call or disconnected"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(pending().as_array().unwrap().iter().all(|i| i["app"] != "gone-app-test"), "nothing left in the queue");
+    }
+
+    #[test]
+    fn one_app_cannot_flood_the_approval_queue() {
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|s| {
+            for _ in 0..MAX_PENDING_PER_APP {
+                s.spawn(|| ask_human("flood-test", "x".into(), &|| stop.load(Ordering::SeqCst)));
+            }
+            let count = || pending().as_array().unwrap().iter().filter(|i| i["app"] == "flood-test").count();
+            let end = std::time::Instant::now() + Duration::from_secs(5);
+            while count() < MAX_PENDING_PER_APP && std::time::Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert_eq!(count(), MAX_PENDING_PER_APP);
+            let extra = ask_human("flood-test", "x".into(), &|| false);
+            assert_eq!(extra, Err("too many calls of this app are already waiting for approval"));
+            // Другому приложению это не мешает: оно получает свою очередь.
+            assert_eq!(
+                ask_human("other-app-test", "x".into(), &|| true),
+                Err("the app cancelled the call or disconnected")
+            );
+            stop.store(true, Ordering::SeqCst);
+        });
+    }
 }

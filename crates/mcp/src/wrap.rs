@@ -8,16 +8,17 @@
 use serde_json::{json, Value};
 use windows_sys::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
 
-fn nonce() -> String {
+fn nonce() -> Result<String, String> {
     let mut buf = [0u8; 12];
     let status = unsafe {
         BCryptGenRandom(std::ptr::null_mut(), buf.as_mut_ptr(), buf.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
     };
     if status != 0 {
         // Генератор системы недоступен: лучше отказать, чем отдать данные с предсказуемой границей.
-        panic!("system random generator failed (0x{status:x})");
+        // Паника здесь убила бы весь сервер (panic = abort), поэтому возвращаем ошибку.
+        return Err(format!("system random generator failed (0x{status:x})"));
     }
-    buf.iter().map(|b| format!("{b:02x}")).collect()
+    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 fn text(s: String) -> Value {
@@ -25,8 +26,8 @@ fn text(s: String) -> Value {
 }
 
 /// Два блока контента: предупреждение и данные в теге с случайным id.
-pub fn untrusted(data: &Value) -> Vec<Value> {
-    wrap_with(data, &nonce())
+pub fn untrusted(data: &Value) -> Result<Vec<Value>, String> {
+    Ok(wrap_with(data, &nonce()?))
 }
 
 fn wrap_with(data: &Value, id: &str) -> Vec<Value> {
@@ -62,7 +63,7 @@ mod tests {
 
     #[test]
     fn nonces_differ() {
-        assert_ne!(nonce(), nonce());
-        assert_eq!(nonce().len(), 24);
+        assert_ne!(nonce().unwrap(), nonce().unwrap());
+        assert_eq!(nonce().unwrap().len(), 24);
     }
 }

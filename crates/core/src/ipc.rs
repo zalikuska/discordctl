@@ -9,14 +9,20 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, BufRead, BufReader, Read, Write},
     mem,
-    os::windows::io::{FromRawHandle, RawHandle},
+    os::windows::io::{AsRawHandle, FromRawHandle, RawHandle},
     ptr,
-    sync::mpsc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, GetLastError, LocalFree, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE},
+    Foundation::{
+        CloseHandle, GetLastError, LocalFree, ERROR_BROKEN_PIPE, ERROR_PIPE_CONNECTED, ERROR_PIPE_NOT_CONNECTED,
+        HANDLE, INVALID_HANDLE_VALUE,
+    },
     Security::{
         Authorization::{ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW},
         GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
@@ -24,8 +30,8 @@ use windows_sys::Win32::{
     Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX},
     System::{
         Pipes::{
-            ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
-            PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+            ConnectNamedPipe, CreateNamedPipeW, PeekNamedPipe, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+            PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
         },
         Threading::{GetCurrentProcess, OpenProcessToken},
     },
@@ -152,6 +158,8 @@ pub enum ClientError {
     /// Pipe не существует: демон не запущен.
     NotRunning,
     Timeout,
+    /// Запрос оборвали сами (`Abort`): агент отменил вызов.
+    Aborted,
     Io(io::Error),
     Bad(String),
 }
@@ -161,27 +169,66 @@ impl fmt::Display for ClientError {
         match self {
             ClientError::NotRunning => write!(f, "daemon is not running"),
             ClientError::Timeout => write!(f, "daemon did not answer in time"),
+            ClientError::Aborted => write!(f, "request was cancelled"),
             ClientError::Io(e) => write!(f, "pipe error: {e}"),
             ClientError::Bad(e) => write!(f, "bad reply: {e}"),
         }
     }
 }
 
+/// Флаг отмены для ожидающего запроса: после `abort()` клиент закрывает соединение, и демон видит, что отвечать некому
+/// (`peer_gone`), а значит снимает вызов с ожидания подтверждения человека.
+#[derive(Clone, Default)]
+pub struct Abort(Arc<AtomicBool>);
+
+impl Abort {
+    pub fn abort(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+    pub fn is_aborted(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// Сколько байт ответа уже можно читать. `Err`, если другая сторона закрыла pipe.
+fn available(f: &File) -> io::Result<u32> {
+    let mut avail = 0u32;
+    let ok = unsafe {
+        PeekNamedPipe(f.as_raw_handle() as HANDLE, ptr::null_mut(), 0, ptr::null_mut(), &mut avail, ptr::null_mut())
+    };
+    if ok == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(avail)
+    }
+}
+
+/// Закрыл ли клиент своё соединение. Демон спрашивает это, пока ждёт решения человека: запрос уже прочитан целиком,
+/// поэтому ничего, кроме закрытия, с той стороны прийти не может. Неясная ошибка считается «клиент на месте».
+pub fn peer_gone(conn: &File) -> bool {
+    match available(conn) {
+        Ok(_) => false,
+        Err(e) => {
+            matches!(e.raw_os_error(), Some(c) if c as u32 == ERROR_BROKEN_PIPE || c as u32 == ERROR_PIPE_NOT_CONNECTED)
+        }
+    }
+}
+
 pub fn request(pipe: &str, req: &Request, timeout: Duration) -> Result<Response, ClientError> {
-    let (tx, rx) = mpsc::channel();
-    let pipe = pipe.to_owned();
+    request_abortable(pipe, req, timeout, &Abort::default())
+}
+
+/// Как `request`, но вызов можно отменить из другого потока. Таймаут и отмена закрывают соединение, а не оставляют
+/// фоновый поток висеть на чтении.
+pub fn request_abortable(pipe: &str, req: &Request, timeout: Duration, abort: &Abort) -> Result<Response, ClientError> {
     // Токен приложения берётся из окружения: так им пользуются и CLI, и MCP-сервер без отдельных флагов.
     let token = std::env::var(TOKEN_ENV).ok().filter(|t| !t.is_empty());
     let line = serde_json::to_string(&Envelope { token, req: req.clone() }).unwrap();
     let deadline = Instant::now() + timeout;
-    thread::spawn(move || {
-        let _ = tx.send(do_request(&pipe, &line, deadline));
-    });
-    rx.recv_timeout(timeout).unwrap_or(Err(ClientError::Timeout))
-}
-
-fn do_request(pipe: &str, line: &str, deadline: Instant) -> Result<Response, ClientError> {
     let mut f = loop {
+        if abort.is_aborted() {
+            return Err(ClientError::Aborted);
+        }
         match OpenOptions::new().read(true).write(true).open(pipe) {
             Ok(f) => break f,
             Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) && Instant::now() < deadline => {
@@ -191,8 +238,108 @@ fn do_request(pipe: &str, line: &str, deadline: Instant) -> Result<Response, Cli
             Err(e) => return Err(ClientError::Io(e)),
         }
     };
-    f.write_all(line.as_bytes()).and_then(|_| f.write_all(b"\n")).map_err(ClientError::Io)?;
+    f.write_all(line.as_bytes())
+        .and_then(|_| {
+            f.write_all(
+                b"
+",
+            )
+        })
+        .map_err(ClientError::Io)?;
+    // Ждём ответ опросом, а не блокирующим чтением: так видны и таймаут, и отмена.
+    let mut pause = Duration::from_millis(1);
+    loop {
+        if abort.is_aborted() {
+            return Err(ClientError::Aborted);
+        }
+        match available(&f) {
+            Ok(n) if n > 0 => break,
+            Ok(_) => {}
+            Err(e) => return Err(ClientError::Io(e)),
+        }
+        if Instant::now() >= deadline {
+            return Err(ClientError::Timeout);
+        }
+        thread::sleep(pause);
+        pause = (pause * 2).min(Duration::from_millis(25));
+    }
     let mut reply = String::new();
     BufReader::new(f.take(MAX_REPLY)).read_line(&mut reply).map_err(ClientError::Io)?;
     serde_json::from_str(reply.trim()).map_err(|e| ClientError::Bad(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    fn pipe_name(tag: &str) -> String {
+        format!(r"\\.\pipe\discordctl-test-{tag}-{}", std::process::id())
+    }
+
+    /// Клиент отменил ожидающий запрос: он получает `Aborted`, а сервер видит, что клиента больше нет.
+    #[test]
+    fn aborting_a_waiting_request_tells_the_server_the_client_is_gone() {
+        let name = pipe_name("abort");
+        let mut listener = Listener::bind(&name).unwrap();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let conn = listener.accept().unwrap();
+            read_request(&conn).unwrap();
+            assert!(!peer_gone(&conn), "the client is still waiting for the answer");
+            tx.send(()).unwrap(); // запрос получен; дальше «ждём человека»
+            let end = Instant::now() + Duration::from_secs(5);
+            while !peer_gone(&conn) && Instant::now() < end {
+                thread::sleep(Duration::from_millis(20));
+            }
+            tx.send(()).unwrap();
+            assert!(peer_gone(&conn), "the server never noticed that the client hung up");
+        });
+        let abort = Abort::default();
+        let a2 = abort.clone();
+        let canceller = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            a2.abort();
+        });
+        let started = Instant::now();
+        let r = request_abortable(&name, &Request::Ping, Duration::from_secs(10), &abort);
+        assert!(matches!(r, Err(ClientError::Aborted)), "got {r:?}");
+        assert!(started.elapsed() < Duration::from_secs(3), "must not wait for the timeout");
+        canceller.join().unwrap();
+        rx.recv_timeout(Duration::from_secs(2)).unwrap(); // сервер получил запрос
+        rx.recv_timeout(Duration::from_secs(6)).expect("server did not notice the disconnect in time");
+    }
+
+    /// Таймаут тоже закрывает соединение, а не оставляет поток ждать вечно.
+    #[test]
+    fn a_timed_out_request_hangs_up() {
+        let name = pipe_name("timeout");
+        let mut listener = Listener::bind(&name).unwrap();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let conn = listener.accept().unwrap();
+            read_request(&conn).unwrap();
+            let end = Instant::now() + Duration::from_secs(5);
+            while !peer_gone(&conn) && Instant::now() < end {
+                thread::sleep(Duration::from_millis(20));
+            }
+            tx.send(peer_gone(&conn)).unwrap();
+        });
+        let r = request_abortable(&name, &Request::Ping, Duration::from_millis(300), &Abort::default());
+        assert!(matches!(r, Err(ClientError::Timeout)), "got {r:?}");
+        assert!(rx.recv_timeout(Duration::from_secs(6)).unwrap(), "server should see the client gone");
+    }
+
+    #[test]
+    fn a_normal_request_still_gets_its_answer() {
+        let name = pipe_name("ok");
+        let mut listener = Listener::bind(&name).unwrap();
+        thread::spawn(move || {
+            let conn = listener.accept().unwrap();
+            read_request(&conn).unwrap();
+            write_response(&conn, &Response::ok("pong")).unwrap();
+        });
+        let r = request(&name, &Request::Ping, Duration::from_secs(5)).unwrap();
+        assert!(r.ok && r.msg.as_deref() == Some("pong"));
+    }
 }

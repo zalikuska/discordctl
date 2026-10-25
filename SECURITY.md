@@ -8,6 +8,8 @@ discordctl is a tool that controls a Discord account. Treat it like you would tr
 - **The daemon's pipe** is accessible only to your Windows user and SYSTEM, and refuses remote clients.
 - **App tokens** are random 256-bit values; only their SHA-256 is stored (`%LOCALAPPDATA%\discordctl\apps.json`).
   The token itself is shown once, and lives in the config of the agent you installed it into.
+- **An app can only pass the declared fields of each call.** The daemon drops everything else (pings, ringing people,
+  stream sound), so this holds for a program that talks to the pipe directly, not only through the MCP server.
 - **Rights are stored by id** and every call is checked by the daemon, not by the MCP server or the client.
 - **Prompt injection.** Messages are written by other people. The MCP server marks everything from Discord as untrusted,
   but a model can still be fooled. That is why writes, voice actions and sharing wait for your approval by default.

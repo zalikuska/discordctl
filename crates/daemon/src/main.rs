@@ -114,13 +114,13 @@ fn status() -> Response {
 }
 
 /// Запросы приложения (с токеном). Всё, что здесь не перечислено, приложениям недоступно.
-fn handle_app(app: &auth::App, req: Request) -> Response {
+fn handle_app(app: &auth::App, req: Request, gone: &dyn Fn() -> bool) -> Response {
     match req {
         Request::Ping => Response::ok("pong"),
         Request::Whoami => {
             Response::ok("app").with_data(serde_json::json!({ "app": app.name, "permissions": app.permissions }))
         }
-        Request::Call { method, params } => match auth::app_call(app, &method, params) {
+        Request::Call { method, params } => match auth::app_call(app, &method, params, gone) {
             Ok(v) => Response::ok("ok").with_data(v),
             Err(e) => Response::err(e),
         },
@@ -189,7 +189,7 @@ fn handle(conn: File) {
     let (resp, exit) = match env.token {
         // Неверный токен не превращается в доступ владельца.
         Some(token) => match auth::identify(&token) {
-            Some(app) => (handle_app(&app, env.req), false),
+            Some(app) => (handle_app(&app, env.req, &|| ipc::peer_gone(&conn)), false),
             None => {
                 auth::audit("?", "auth", None, "denied", "invalid or revoked token");
                 (Response::err("invalid or revoked token"), false)
