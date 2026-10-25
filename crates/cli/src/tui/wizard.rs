@@ -492,10 +492,12 @@ fn agent_desc(a: AgentKind) -> &'static str {
 }
 
 fn pick_agents(tui: &mut Tui) -> Result<Vec<AgentKind>> {
-    let mut items: Vec<Item> = mcp::ALL
+    let avail = mcp::available();
+    let none_found = avail == [AgentKind::Print];
+    let mut items: Vec<Item> = avail
         .iter()
         .map(|a| {
-            let found = mcp::detected(*a) && *a != AgentKind::Print;
+            let found = *a != AgentKind::Print;
             let mut it = Item::toggle(a.title(), agent_desc(*a), found);
             if found {
                 it = it.tag("found on this PC", OK);
@@ -506,7 +508,7 @@ fn pick_agents(tui: &mut Tui) -> Result<Vec<AgentKind>> {
     items.push(Item::action("Connect", ""));
     items.push(Item::action("Skip", ""));
     let mut choice = Choice::new(items);
-    let n = mcp::ALL.len();
+    let n = avail.len();
     let picked = tui.run(
         &mut choice,
         4,
@@ -518,9 +520,17 @@ fn pick_agents(tui: &mut Tui) -> Result<Vec<AgentKind>> {
                 f,
                 top,
                 vec![
-                    plain("Give an agent (Claude Code, Claude Desktop, Cursor …) access to your Discord over MCP."),
+                    plain(if none_found {
+                        "No Claude Code, Claude Desktop or Cursor was found on this PC."
+                    } else {
+                        "Give an agent access to your Discord over MCP."
+                    }),
                     Line::from(Span::styled(
-                        "It gets a token with only the rights you approve on the next screen.",
+                        if none_found {
+                            "You can still get the settings to paste into any agent that supports MCP."
+                        } else {
+                            "It gets a token with only the rights you approve on the next screen."
+                        },
                         dim(),
                     )),
                 ],
@@ -541,7 +551,7 @@ fn pick_agents(tui: &mut Tui) -> Result<Vec<AgentKind>> {
                     return Flow::Done(None);
                 } else {
                     return Flow::Done(Some(
-                        (0..n).filter(|i| choice.items[*i].on).map(|i| mcp::ALL[i]).collect::<Vec<_>>(),
+                        (0..n).filter(|i| choice.items[*i].on).map(|i| avail[i]).collect::<Vec<_>>(),
                     ));
                 }
             }

@@ -48,9 +48,33 @@ fn home() -> PathBuf {
     std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default()
 }
 
+/// Папки настроек Claude Desktop. Версия из Microsoft Store (MSIX) хранит их не в `%APPDATA%\Claude`,
+/// а внутри каталога пакета; приложение читает именно их, поэтому они идут первыми.
+fn claude_desktop_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![];
+    if let Ok(packages) = std::fs::read_dir(paths::local_app_data().join("Packages")) {
+        for e in packages.flatten() {
+            if e.file_name().to_string_lossy().starts_with("Claude_") {
+                let d = e.path().join("LocalCache").join("Roaming").join("Claude");
+                if d.is_dir() {
+                    dirs.push(d);
+                }
+            }
+        }
+    }
+    let plain = appdata().join("Claude");
+    if plain.is_dir() {
+        dirs.push(plain);
+    }
+    dirs
+}
+
 fn config_path(a: AgentKind) -> Option<PathBuf> {
     match a {
-        AgentKind::ClaudeDesktop => Some(appdata().join("Claude").join("claude_desktop_config.json")),
+        AgentKind::ClaudeDesktop => {
+            let dir = claude_desktop_dirs().into_iter().next().unwrap_or_else(|| appdata().join("Claude"));
+            Some(dir.join("claude_desktop_config.json"))
+        }
         AgentKind::Cursor => Some(home().join(".cursor").join("mcp.json")),
         _ => None,
     }
@@ -67,10 +91,16 @@ fn claude_cli() -> Option<PathBuf> {
 pub fn detected(a: AgentKind) -> bool {
     match a {
         AgentKind::ClaudeCode => claude_cli().is_some(),
-        AgentKind::ClaudeDesktop => appdata().join("Claude").is_dir(),
+        AgentKind::ClaudeDesktop => !claude_desktop_dirs().is_empty(),
         AgentKind::Cursor => home().join(".cursor").is_dir(),
         AgentKind::Print => true,
     }
+}
+
+/// Агенты, которые есть на этом ПК, и всегда «показать настройки». Остальные не предлагаем:
+/// нечего подключать (можно явно: `--agent claude-desktop`).
+pub fn available() -> Vec<AgentKind> {
+    ALL.iter().copied().filter(|a| detected(*a)).collect()
 }
 
 pub const ALL: [AgentKind; 4] = [AgentKind::ClaudeCode, AgentKind::ClaudeDesktop, AgentKind::Cursor, AgentKind::Print];
@@ -242,20 +272,15 @@ pub fn connect_quiet(a: AgentKind, perms: &Permissions) -> Result<(String, Optio
 pub fn install(mut agents: Vec<AgentKind>, preset: Preset, json_mode: bool) -> Result<()> {
     require_installed()?;
     if agents.is_empty() {
-        let titles: Vec<String> = ALL
+        let avail = available();
+        let titles: Vec<String> = avail
             .iter()
-            .map(|a| {
-                if detected(*a) && *a != AgentKind::Print {
-                    format!("{} (found)", a.title())
-                } else {
-                    a.title().to_owned()
-                }
-            })
+            .map(|a| if *a == AgentKind::Print { a.title().to_owned() } else { format!("{} (found)", a.title()) })
             .collect();
         let items: Vec<&str> = titles.iter().map(String::as_str).collect();
-        let defaults: Vec<bool> = ALL.iter().map(|a| detected(*a) && *a != AgentKind::Print).collect();
+        let defaults: Vec<bool> = avail.iter().map(|a| *a != AgentKind::Print).collect();
         let picked = ui::multiselect("Which agents should get Discord access?", &items, &defaults)?;
-        agents = picked.into_iter().map(|i| ALL[i]).collect();
+        agents = picked.into_iter().map(|i| avail[i]).collect();
         if agents.is_empty() {
             ui::info("nothing selected");
             return Ok(());
@@ -442,5 +467,33 @@ mod tests {
         assert_eq!(quote("plain"), "plain");
         assert!(quote("a b").starts_with('"') && quote("a b").ends_with('"'));
         assert_eq!(quote("").len(), 2, "an empty argument is passed as two quote characters");
+    }
+}
+
+#[cfg(test)]
+mod store_tests {
+    use super::*;
+
+    /// Claude Desktop из Microsoft Store хранит настройки в каталоге пакета: его нужно и находить, и предпочитать.
+    #[test]
+    fn claude_desktop_from_the_store_is_found_and_preferred() {
+        let tmp = std::env::temp_dir().join(format!("dctl-claude-{}", std::process::id()));
+        let (local, roaming) = (tmp.join("Local"), tmp.join("Roaming"));
+        std::env::set_var("LOCALAPPDATA", &local);
+        std::env::set_var("APPDATA", &roaming);
+        assert!(!detected(AgentKind::ClaudeDesktop));
+
+        std::fs::create_dir_all(roaming.join("Claude")).unwrap();
+        assert!(detected(AgentKind::ClaudeDesktop));
+        assert_eq!(
+            config_path(AgentKind::ClaudeDesktop),
+            Some(roaming.join("Claude").join("claude_desktop_config.json"))
+        );
+
+        let pkg = local.join("Packages").join("Claude_abc123").join("LocalCache").join("Roaming").join("Claude");
+        std::fs::create_dir_all(&pkg).unwrap();
+        assert_eq!(config_path(AgentKind::ClaudeDesktop), Some(pkg.join("claude_desktop_config.json")));
+        assert!(available().contains(&AgentKind::ClaudeDesktop) && available().contains(&AgentKind::Print));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

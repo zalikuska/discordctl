@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The agent list offers only what is found on the PC (plus "show the settings"); Claude Desktop from the Microsoft
+  Store is now detected, and its config is written where that app reads it (inside the package folder).
+
 ## 0.1.1 - 2026-10-25
 
 - `setup` is now a full-screen wizard (arrow keys, Space to toggle, Enter to confirm): system check, options,
