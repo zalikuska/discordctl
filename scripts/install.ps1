@@ -53,23 +53,33 @@ function Install-Discord($tmp) {
 if ($env:OS -ne 'Windows_NT') { throw 'discordctl runs on Windows only.' }
 
 Write-Host "`ndiscordctl installer" -ForegroundColor White
-$api = if ($tag) { "https://api.github.com/repos/$repo/releases/tags/$tag" } else { "https://api.github.com/repos/$repo/releases/latest" }
 Step "looking up the release ($repo, $(if ($tag) { $tag } else { 'latest' }))"
-$release = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'discordctl-installer' }
-$zipAsset = $release.assets | Where-Object { $_.name -like 'discordctl-*-windows-x64.zip' } | Select-Object -First 1
-$sumAsset = $release.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' } | Select-Object -First 1
-if (-not $zipAsset -or -not $sumAsset) { throw "release $($release.tag_name) has no Windows archive or checksum file" }
+# The GitHub API allows only 60 anonymous requests an hour per IP address, so it is not used here: the page
+# github.com/<repo>/releases/latest redirects to the tag, and release files have predictable download URLs.
+if (-not $tag) {
+    $req = [Net.HttpWebRequest]::Create("https://github.com/$repo/releases/latest")
+    $req.AllowAutoRedirect = $false
+    $req.UserAgent = 'discordctl-installer'
+    $resp = $req.GetResponse()
+    try { $location = [string]$resp.Headers['Location'] } finally { $resp.Close() }
+    if ($location -notmatch '/releases/tag/([^/?#]+)$') { throw "cannot find the latest release of $repo (is there one yet?)" }
+    $tag = $Matches[1]
+}
+$zipName = "discordctl-$($tag.TrimStart('v'))-windows-x64.zip"
+$base = "https://github.com/$repo/releases/download/$tag"
 
 $tmp = Join-Path $env:TEMP ("discordctl-install-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force $tmp | Out-Null
 try {
-    $zip = Join-Path $tmp $zipAsset.name
-    Step "downloading $($zipAsset.name) ($([math]::Round($zipAsset.size / 1MB, 1)) MB)"
-    Invoke-WebRequest -Uri $zipAsset.browser_download_url -OutFile $zip -Headers @{ 'User-Agent' = 'discordctl-installer' }
-    $sums = (Invoke-WebRequest -Uri $sumAsset.browser_download_url -Headers @{ 'User-Agent' = 'discordctl-installer' }).Content
-    $expected = ($sums -split "`n" | Where-Object { $_ -match [regex]::Escape($zipAsset.name) } | Select-Object -First 1) -replace '\s.*', ''
+    $zip = Join-Path $tmp $zipName
+    Step "downloading $zipName"
+    Invoke-WebRequest -Uri "$base/$zipName" -OutFile $zip -UseBasicParsing -Headers @{ 'User-Agent' = 'discordctl-installer' }
+    $sumFile = Join-Path $tmp 'SHA256SUMS.txt'
+    Invoke-WebRequest -Uri "$base/SHA256SUMS.txt" -OutFile $sumFile -UseBasicParsing -Headers @{ 'User-Agent' = 'discordctl-installer' }
+    $sums = Get-Content $sumFile -Raw
+    $expected = ($sums -split "`n" | Where-Object { $_ -match [regex]::Escape($zipName) } | Select-Object -First 1) -replace '\s.*', ''
     $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-    if (-not $expected -or $expected.Trim().ToLower() -ne $actual) { throw "checksum mismatch for $($zipAsset.name): expected '$expected', got '$actual'. Not installing." }
+    if (-not $expected -or $expected.Trim().ToLower() -ne $actual) { throw "checksum mismatch for ${zipName}: expected '$expected', got '$actual'. Not installing." }
     Step "checksum ok ($($actual.Substring(0, 12))...)"
 
     $dir = Join-Path $tmp 'pkg'

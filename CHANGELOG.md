@@ -6,6 +6,8 @@
   when only PTB or Canary is installed.
 - `install.ps1` offers to download and run the official Discord installer (signature checked) when Discord is missing,
   and passes `DISCORDCTL_ARGS` to `setup` for unattended installs.
+- `install.ps1` no longer calls the GitHub API (60 anonymous requests an hour per IP, which people on a shared IP hit):
+  it resolves the latest tag from the `releases/latest` redirect and downloads files by their fixed URLs.
 
 - The launcher refuses to start a `*.real.exe` that is itself a launcher (it used to re-spawn itself without end), and
   `doctor`/`install` report such an install as broken.
