@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 - 2026-10-25
 
 - Russian interface: `discordctl lang ru` (or `en`, or `auto` for the Windows display language) is remembered; `--lang ru`
   and `DISCORDCTL_LANG=ru` override it for one run (for the one-line installer: `DISCORDCTL_ARGS="--lang ru"`). Messages,
