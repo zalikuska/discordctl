@@ -12,7 +12,7 @@ cargo test --release
 cd payload; npm ci; npm run build        # only if you touch payload/src
 ```
 
-Requirements: Rust 1.80+, and Node 20+ if you change the TypeScript payload. The built bundle
+Requirements: Rust 1.82+, and Node 20+ if you change the TypeScript payload. The built bundle
 `payload/dist/payload.js` is committed (and embedded in the daemon), so CI fails when it is out of date: rebuild it
 and commit the result.
 

@@ -202,6 +202,15 @@ fn run(cli: Cli) -> Result<()> {
             out(json, &v, || render::voice(&v));
             Ok(())
         }
+        Cmd::Presence(a) => {
+            let v = payload_call(
+                "presence",
+                json!({ "user": a.user, "guild": a.server, "status": a.status, "activity": a.activity, "limit": a.limit }),
+            )?;
+            out(json, &v, || render::presence(&v));
+            Ok(())
+        }
+        Cmd::Watch(args) => watch(args, json),
         Cmd::Stream { cmd } => {
             match cmd {
                 StreamCmd::List => {
@@ -263,7 +272,90 @@ fn run(cli: Cli) -> Result<()> {
                 Ok(())
             }
             DevCmd::Reload { payload } => reload_payload(payload, json),
+            DevCmd::Emit { events } => {
+                // `@файл`: в PowerShell 5.1 кавычки внутри аргумента теряются, поэтому JSON можно положить в файл.
+                let text = match events.strip_prefix('@') {
+                    Some(path) => std::fs::read_to_string(path).with_context(|| path.to_owned())?,
+                    None => events,
+                };
+                let events: Vec<Value> =
+                    serde_json::from_str(text.trim_start_matches('\u{feff}')).context("events must be a JSON array")?;
+                owner_call(&Request::DevEmit { events })?;
+                Ok(())
+            }
         },
+    }
+}
+
+/// `discordctl watch`: события Discord по мере появления. Работает ожиданием у демона: ответ приходит сразу, как
+/// что-то случилось, а не раз в несколько секунд.
+fn watch(a: WatchArgs, json: bool) -> Result<()> {
+    let mut only: Vec<String> = vec![];
+    for c in &a.channel {
+        let r = payload_call("resolve", json!({ "channel": c }))?;
+        only.push(r["id"].as_str().context("the client returned no channel id")?.to_owned());
+    }
+    if !json {
+        match ask(&Request::Status)?.and_then(|r| r.data).map(|d| d["hook"]["active"] == true) {
+            Some(true) => {}
+            _ => ui::warn("Discord is not attached yet: events start flowing once it is (see `discordctl doctor`)"),
+        }
+        ui::info("watching (Ctrl+C to stop; times in UTC)");
+    }
+    // Условия на присутствие: имена людей превращаем в id через клиент.
+    let mut kinds = a.kinds.clone();
+    let mut filter = None;
+    if !(a.status.is_empty() && a.activity.is_empty() && a.user.is_empty()) {
+        let mut users = vec![];
+        for u in &a.user {
+            let r = payload_call("presence", json!({ "user": u, "limit": 1 }))?;
+            users.push(r["presences"][0]["user"]["id"].as_str().context("the client returned no user id")?.to_owned());
+        }
+        filter = Some(json!({ "status": a.status, "activity": a.activity, "users": users }));
+        if !kinds.iter().any(|k| k == "presence") {
+            kinds.push("presence".to_owned());
+        }
+    }
+    let sub = format!("cli-{}", std::process::id());
+    let mut seen = 0usize;
+    let mut told = String::new();
+    loop {
+        let req = Request::Events {
+            kinds: kinds.clone(),
+            wait_secs: 25,
+            max: 100,
+            sub: Some(sub.clone()),
+            filter: filter.clone(),
+        };
+        let r = client::call(&req, std::time::Duration::from_secs(40)).map_err(anyhow::Error::msg)?;
+        if !r.ok {
+            bail!("{}", r.msg.unwrap_or_default());
+        }
+        let data = r.data.unwrap_or_default();
+        // Если подписку не удалось настроить (Discord закрыт, изменились внутренности), говорим об этом один раз.
+        if let Some(p) = data["problem"].as_str().filter(|p| *p != told) {
+            if !json {
+                ui::warn(format!("events are not flowing: {p}"));
+            }
+            told = p.to_owned();
+        }
+        if !json && data["dropped"].as_u64().unwrap_or(0) > 0 {
+            ui::warn(format!("{} events were missed (too many at once)", data["dropped"]));
+        }
+        for ev in data["events"].as_array().into_iter().flatten() {
+            if !only.is_empty() && !ev["channel_id"].as_str().is_some_and(|c| only.iter().any(|o| o == c)) {
+                continue;
+            }
+            if json {
+                println!("{ev}");
+            } else {
+                render::event(ev);
+            }
+            seen += 1;
+            if a.count.is_some_and(|n| seen >= n) {
+                return Ok(());
+            }
+        }
     }
 }
 

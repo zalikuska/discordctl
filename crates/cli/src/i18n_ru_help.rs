@@ -81,6 +81,45 @@ pub const RU_HELP: &[(&str, &str)] = &[
         "Shell completions: `discordctl completions powershell | Out-String | Invoke-Expression`",
         "Автодополнение для оболочки: `discordctl completions powershell | Out-String | Invoke-Expression`",
     ),
+    (
+        "Watch what happens: new messages, people joining voice, typing, who started a game (Ctrl+C to stop)",
+        "Следить за событиями: новые сообщения, кто зашёл в голос, набор текста, кто начал играть (Ctrl+C: выход)",
+    ),
+    (
+        "What to watch: messages, voice, typing, presence, all, or one kind such as voice_join (default: all but presence)",
+        "За чем следить: messages, voice, typing, presence, all или один вид вроде voice_join (по умолчанию всё, кроме presence)",
+    ),
+    (
+        "Presence: only when somebody ENTERS this status: online, idle, dnd or offline (repeatable)",
+        "Присутствие: только когда кто-то ВХОДИТ в этот статус: online, idle, dnd или offline (можно повторять)",
+    ),
+    (
+        "Presence: only when somebody starts or stops something whose name contains this, e.g. a game (repeatable)",
+        "Присутствие: только когда кто-то начинает или бросает занятие с таким названием, например игру (можно повторять)",
+    ),
+    ("Presence: only this person (name or id, repeatable)", "Присутствие: только этот человек (имя или id, можно повторять)"),
+    (
+        "Who is online and what they are doing (friends, or the loaded members of a server)",
+        "Кто в сети и чем занят (друзья или загруженные участники сервера)",
+    ),
+    ("One person (name or id) instead of everybody", "Один человек (имя или id) вместо всех"),
+    (
+        "Members of this server that Discord has loaded, instead of friends",
+        "Участники этого сервера, которых Discord загрузил, вместо друзей",
+    ),
+    (
+        "Only these statuses: online, idle, dnd, offline (repeatable)",
+        "Только эти статусы: online, idle, dnd, offline (можно повторять)",
+    ),
+    (
+        "Only people doing something whose name contains this, e.g. a game (repeatable)",
+        "Только те, кто занят чем-то с таким названием, например игрой (можно повторять)",
+    ),
+    (
+        "Only this chat or channel (repeatable): Server/channel, @name or an id",
+        "Только этот чат или канал (можно повторять): Server/channel, @имя или id",
+    ),
+    ("Stop after this many events", "Остановиться после стольких событий"),
     ("Tools for working on discordctl itself", "Инструменты для разработки самого discordctl"),
     ("Anthropic Claude Code (needs the `claude` command)", "Anthropic Claude Code (нужна команда `claude`)"),
     ("Claude Desktop app", "Приложение Claude Desktop"),
@@ -219,8 +258,8 @@ pub const RU_HELP: &[(&str, &str)] = &[
         "Взять права из манифеста TOML (см. examples/agent.toml)",
     ),
     (
-        "Lists it may see: servers, channels, chats, friends, me, members, voices, or *",
-        "Какие списки ему видны: servers, channels, chats, friends, me, members, voices или *",
+        "Lists it may see: servers, channels, chats, friends, me, members, voices, presence, or *",
+        "Какие списки ему видны: servers, channels, chats, friends, me, members, voices, presence или *",
     ),
     (
         "Chats it may read: @name, Server/channel, Server/*, @*, or *",

@@ -135,7 +135,7 @@ const MEMBERS_MAX = 500;
 export function members(p: { guild: string; query?: string; limit?: number }) {
   const g = resolveGuild(p.guild);
   const gid = String(g.id);
-  const raw = (call("GuildMemberStore", "getMembers", gid) ?? []) as Raw[];
+  const raw = guildMembersOf(gid);
   let total: number | null = null;
   try {
     const n = call("GuildMemberCountStore", "getMemberCount", gid);
@@ -169,6 +169,32 @@ export function members(p: { guild: string; query?: string; limit?: number }) {
     truncated: all.length > limit,
     members: all.slice(0, limit),
   };
+}
+
+/** Участники сервера, которых клиент уже загрузил (у каждого `userId`, `nick`, `roles`, `joinedAt`). */
+export function guildMembersOf(guildId: string): Raw[] {
+  return (call("GuildMemberStore", "getMembers", guildId) ?? []) as Raw[];
+}
+
+/** Человек по id или по имени среди друзей, собеседников в личных чатах и (если указан сервер) загруженных участников. */
+export function findUser(query: string, guildId?: string): Raw {
+  const q = query.trim();
+  if (isId(q)) {
+    const u = call("UserStore", "getUser", q);
+    if (u) return u;
+    throw new Error(`no user with id ${q} is known to the client`);
+  }
+  const users = new Map<string, Raw>();
+  const add = (u: Raw | undefined) => {
+    if (u?.id) users.set(String(u.id), u);
+  };
+  for (const id of call("RelationshipStore", "getFriendIDs") as string[]) add(call("UserStore", "getUser", id));
+  for (const ch of call("ChannelStore", "getSortedPrivateChannels") as Raw[]) recipientsOf(ch).forEach(add);
+  if (guildId) {
+    for (const m of guildMembersOf(String(resolveGuild(guildId).id))) add(call("UserStore", "getUser", m.userId));
+  }
+  const items = [...users.values()].map((u) => ({ ...u, id: String(u.id) }));
+  return pick<Raw & { id: string }>(items, q, [(u) => [userName(u), String(u.username), friendNick(String(u.id))]], "user");
 }
 
 export function channels(guildQuery: string) {

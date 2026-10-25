@@ -168,7 +168,9 @@ impl Permissions {
     /// Проверка формы: неизвестные слова и шаблоны — ошибка, чтобы опечатка не превратилась в молчаливый отказ или, хуже, в лишнее право.
     pub fn validate(&self) -> Result<(), String> {
         for w in &self.list {
-            if !["*", "guilds", "channels", "dms", "friends", "me", "members", "voices"].contains(&w.as_str()) {
+            if !["*", "guilds", "channels", "dms", "friends", "me", "members", "voices", "presence"]
+                .contains(&w.as_str())
+            {
                 return Err(format!("list: unknown item {w:?}"));
             }
         }

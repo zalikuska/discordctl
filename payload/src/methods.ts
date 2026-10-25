@@ -1,5 +1,7 @@
 // Методы, доступные снаружи через `call(метод, параметры)`. Результат обязан сериализоваться в JSON.
 
+import { findDispatcher, watchDrain, watchSet } from "./events";
+import { presence, type PresenceFilter } from "./presence";
 import { channels, describeChannel, dms, friends, guilds, members, resolveChannel } from "./directory";
 import { describeCandidates, httpInfo, writeBudget } from "./http";
 import { readMessages } from "./messages";
@@ -64,7 +66,8 @@ function selfcheck() {
     "toggleSelfMute+toggleSelfDeaf": !!findByFns(["toggleSelfMute", "toggleSelfDeaf"]),
   };
   if (Object.values(actions).some((v) => !v)) ok = false;
-  return { ok, ...buildInfo(), stores: report, actions, http: httpInfo() };
+  // События нужны только для подписок: их отсутствие не делает клиент «несовместимым».
+  return { ok, ...buildInfo(), stores: report, actions, http: httpInfo(), events: { dispatcher: !!findDispatcher() } };
 }
 
 function me() {
@@ -109,6 +112,20 @@ const methods: Record<string, Method> = {
   stream_start: (p) => startStream({ source: String(p.source ?? ""), audio: p.audio === true, dry_run: p.dry_run === true }),
   stream_stop: (p) => stopStream({ dry_run: p.dry_run === true }),
   voice_status: () => voiceStatus(),
+  watch_set: (p) =>
+    watchSet({
+      kinds: Array.isArray(p.kinds) ? p.kinds.map(String) : [],
+      presence: Array.isArray(p.presence) ? (p.presence as PresenceFilter[]) : null,
+    }),
+  presence: (p) =>
+    presence({
+      guild: p.guild == null ? undefined : String(p.guild),
+      user: p.user == null ? undefined : String(p.user),
+      status: p.status,
+      activity: p.activity,
+      limit: p.limit == null ? undefined : Number(p.limit),
+    }),
+  watch_drain: () => watchDrain(),
   voice_who: (p) =>
     voiceWho({
       channel: p.channel == null ? undefined : String(p.channel),

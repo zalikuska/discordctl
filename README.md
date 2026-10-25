@@ -31,7 +31,7 @@ the Discord Inc. signature first). For unattended installs set `DISCORDCTL_ARGS`
 Prefer to look first? Download `discordctl-*-windows-x64.zip` from [Releases](https://github.com/zalikuska/discordctl/releases),
 unpack it, and run `discordctl.exe setup`.
 
-**From source** (Rust 1.80+, Node 20+ only if you change `payload/`):
+**From source** (Rust 1.82+, Node 20+ only if you change `payload/`):
 
 ```powershell
 git clone https://github.com/zalikuska/discordctl && cd discordctl
@@ -78,6 +78,8 @@ setup | install | update | uninstall | doctor | status | start  lifecycle
 server | channel list <server> | chat | friend                  what you have
 message read|send|edit|delete|react <target> …                  (shortcuts: read, send)
 voice status|who|join|leave|mute|unmute|deafen|undeafen
+presence [--activity game] [--status online]                    who is online and what they play
+watch [messages|voice|typing|presence] [-c chat]                live events (--json: one JSON line each)
 stream list|status|start|stop
 app add|list|remove|log|approve|whoami                          rights of apps and agents
 mcp install|status|remove                                       connect AI agents
@@ -104,6 +106,16 @@ Voice and window sharing are granted explicitly with `discordctl app add`.
 - The MCP server refuses to run without a token, shows the agent only the tools it may use, and marks everything that
   came from Discord as untrusted data so other people's messages are less likely to steer the model.
 - Every decision is in the audit log: `discordctl app log`.
+- **Events.** The `discord_wait_events` tool (and `discordctl watch` for you) delivers what happens in Discord as it
+  happens: new, edited and deleted messages, people joining, leaving and moving between voice channels, typing. An agent
+  gets messages and typing only from chats it may `read`, and voice events only with the `voices` list word. The
+  call waits (up to 45 s) and returns as soon as something arrives; call it again to keep listening, events are kept
+  for a couple of minutes in between. Nothing extra is requested from Discord: the client already receives these events.
+- **Presence.** `discordctl presence` (tool `discord_presence`) shows who is online and what they are doing (playing,
+  listening, streaming, a custom status) for your friends, a server's loaded members, or one person. Needs the `presence`
+  list word. As events it is opt-in (`all` never includes it): `discordctl watch presence --activity minecraft` or
+  `--status online --user alice` reports when somebody *starts or stops* a game with that name, or *enters* that status;
+  the tool takes the same as `filter`. The daemon tells the client which filters exist, so a busy account does not flood the queue.
 
 > [!IMPORTANT]
 > A token limits the *MCP connection*. It does not limit an agent that also has a normal shell as you; such an agent can

@@ -8,6 +8,8 @@ pub enum Needs {
     List(&'static str),
     Read,
     Write,
+    /// События: нужно право читать хотя бы что-то или слово `voices`.
+    Events,
     /// Слово из `voice`.
     Voice(&'static str),
     /// Слово из `stream`; `start` открывается словом `window` или `screen`.
@@ -110,6 +112,69 @@ pub fn all() -> Vec<Tool> {
                     json!({
                         "channel": { "type": "string", "description": "Voice channel: `<server>/<channel>`, a channel id, or `dm:<name>` for a call in a chat." },
                         "guild": { "type": "string", "description": "Server name or id: lists every occupied voice channel there." }
+                    }),
+                    &[],
+                )
+            },
+        },
+        Tool {
+            name: "discord_presence",
+            method: "presence",
+            description: "Show who is online and what they are doing (playing, listening, streaming, a custom status): \
+                your friends, the loaded members of one server (`guild`), or one person (`user`). Filter by `status` \
+                (online, idle, dnd, offline) and by `activity` (part of a name, e.g. a game).",
+            needs: Needs::List("presence"),
+            allowed: &["guild", "user", "status", "activity", "limit"],
+            fixed: &[],
+            read_only: true,
+            destructive: false,
+            schema: || {
+                obj(
+                    json!({
+                        "guild": { "type": "string", "description": "Server name or id: its loaded members instead of friends." },
+                        "user": { "type": "string", "description": "One person by name or id." },
+                        "status": { "type": "string", "description": "Only these statuses, comma-separated: online, idle, dnd, offline." },
+                        "activity": { "type": "string", "description": "Only people whose activity name contains this (a game, an app)." },
+                        "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100, "description": "How many to return (max 500)." }
+                    }),
+                    &[],
+                )
+            },
+        },
+        Tool {
+            name: "discord_wait_events",
+            method: "events",
+            description: "Wait for things that happen in Discord and return them: new, edited and deleted messages, people \
+                joining, leaving or moving between voice channels, typing. Returns as soon as something arrives, or \
+                empty after `timeout` seconds; call it again to keep listening (events are kept between calls for \
+                a couple of minutes). You only get chats you may read and, for voice, if voice lists are allowed. Presence changes \
+                (someone came online, started or stopped a game) are only sent when you ask for kind `presence`; narrow \
+                them with `filter`, e.g. {\"activity\": [\"minecraft\"]} or {\"status\": [\"online\"], \"users\": [\"<id>\"]}.",
+            needs: Needs::Events,
+            allowed: &["kinds", "timeout", "max", "filter"],
+            fixed: &[],
+            read_only: true,
+            destructive: false,
+            schema: || {
+                obj(
+                    json!({
+                        "kinds": {
+                            "type": "array",
+                            "items": { "type": "string", "enum": ["all", "messages", "voice", "message", "message_edit", "message_delete", "voice_join", "voice_leave", "voice_move", "voice_state", "typing", "presence"] },
+                            "description": "What to listen for (default: everything you are allowed). `messages` and `voice` are groups."
+                        },
+                        "filter": {
+                            "type": "object",
+                            "description": "Only for kind `presence`. status: the person ENTERS one of these statuses (online, idle, dnd, offline); activity: the person starts or stops something whose name contains one of these; users: only these user ids. All given fields must match.",
+                            "properties": {
+                                "status": { "type": "array", "items": { "type": "string", "enum": ["online", "idle", "dnd", "offline"] } },
+                                "activity": { "type": "array", "items": { "type": "string" } },
+                                "users": { "type": "array", "items": { "type": "string" } }
+                            },
+                            "additionalProperties": false
+                        },
+                        "timeout": { "type": "integer", "minimum": 1, "maximum": 45, "default": 25, "description": "How many seconds to wait for something to happen." },
+                        "max": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50, "description": "At most this many events per call." }
                     }),
                     &[],
                 )
@@ -384,6 +449,12 @@ impl Tool {
                 permissions["list"].as_array().is_some_and(|a| a.iter().any(|w| w == "*" || w == word))
             }
             Needs::Read => has("read"),
+            Needs::Events => {
+                has("read")
+                    || permissions["list"]
+                        .as_array()
+                        .is_some_and(|a| a.iter().any(|w| w == "*" || w == "voices" || w == "presence"))
+            }
             Needs::Write => has("write"),
             Needs::Stream(word) => permissions["stream"].as_array().is_some_and(|a| {
                 a.iter().any(|w| w == "*" || w == word || (word == "start" && (w == "window" || w == "screen")))
@@ -428,12 +499,19 @@ impl Tool {
         // Размер страницы ограничен: огромная история забьёт контекст модели.
         let page = match self.method {
             "messages" => Some((50, 200)),
-            "members" => Some((100, 500)),
+            "members" | "presence" => Some((100, 500)),
             _ => None,
         };
         if let Some((default, max)) = page {
             let limit = out.get("limit").and_then(Value::as_u64).unwrap_or(default).clamp(1, max);
             out.insert("limit".into(), json!(limit));
+        }
+        // Ожидание событий ограничено: клиенты агентов сдаются примерно через минуту.
+        if self.method == "events" {
+            let timeout = out.get("timeout").and_then(Value::as_u64).unwrap_or(25).clamp(1, 45);
+            let max = out.get("max").and_then(Value::as_u64).unwrap_or(50).clamp(1, 100);
+            out.insert("timeout".into(), json!(timeout));
+            out.insert("max".into(), json!(max));
         }
         Value::Object(out)
     }
@@ -487,6 +565,31 @@ mod tests {
         assert_eq!(t.params(&json!({ "guild": "g", "limit": 100000 }))["limit"], 500);
         assert_eq!(t.params(&json!({ "guild": "g" }))["limit"], 100);
         assert!(t.params(&json!({ "guild": "g", "token": "x" })).get("token").is_none());
+    }
+
+    #[test]
+    fn presence_has_its_own_word_and_filters_pass_through() {
+        assert!(!find("discord_presence").visible(&json!({ "list": ["members", "voices"] })));
+        assert!(find("discord_presence").visible(&json!({ "list": ["presence"] })));
+        assert!(find("discord_presence").visible(&json!({ "list": ["*"] })));
+        assert_eq!(find("discord_presence").params(&json!({ "activity": "minecraft", "limit": 99999 }))["limit"], 500);
+        let p = find("discord_wait_events").params(&json!({ "kinds": ["presence"], "filter": { "activity": ["x"] } }));
+        assert_eq!(p["filter"], json!({ "activity": ["x"] }));
+    }
+
+    #[test]
+    fn event_waiting_is_capped_and_needs_something_to_listen_to() {
+        let t = find("discord_wait_events");
+        assert!(!t.visible(&json!({ "list": ["guilds"], "read": [] })));
+        assert!(t.visible(&json!({ "read": ["dm:*"] })));
+        assert!(t.visible(&json!({ "list": ["voices"] })));
+        assert!(t.visible(&json!({ "list": ["presence"] })));
+        let p = t.params(&json!({ "timeout": 9999, "max": 9999, "kinds": ["messages"], "x": 1 }));
+        assert_eq!(p["timeout"], 45);
+        assert_eq!(p["max"], 100);
+        assert_eq!(p["kinds"], json!(["messages"]));
+        assert!(p.get("x").is_none());
+        assert_eq!(t.params(&json!({}))["timeout"], 25);
     }
 
     #[test]

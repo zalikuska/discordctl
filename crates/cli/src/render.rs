@@ -171,6 +171,136 @@ pub fn write_result(v: &Value) {
 }
 
 /// Состояние голоса и итог действий с ним.
+/// Статус цветом: в сети, неактивен, не беспокоить, не в сети.
+fn status_word(status: &str) -> String {
+    let text = crate::i18n::tr(status).into_owned();
+    match status {
+        "online" => ui::green(text),
+        "idle" => ui::yellow(text),
+        "dnd" => ui::red(text),
+        _ => ui::dim(text),
+    }
+}
+
+/// Присутствие: кто в сети и чем занят.
+pub fn presence(v: &Value) {
+    let rows: Vec<Vec<String>> = rows_of(&v["presences"])
+        .map(|p| {
+            let name = p["user"]["display_name"].as_str().or(p["user"]["username"].as_str()).unwrap_or("?");
+            let doing: Vec<String> = rows_of(&p["activities"])
+                .map(|a| {
+                    let mut t = format!("{} {}", crate::i18n::tr(s(a, "type")), s(a, "name"));
+                    if let Some(st) = a["state"].as_str().or(a["details"].as_str()).filter(|x| !x.is_empty()) {
+                        t.push_str(&format!(" ({st})"));
+                    }
+                    t
+                })
+                .collect();
+            vec![ui::bold(name), status_word(s(p, "status")), doing.join("; ")]
+        })
+        .collect();
+    if rows.is_empty() {
+        return ui::info("nobody matches");
+    }
+    println!("{}", ui::table(&["PERSON", "STATUS", "DOING"], &rows));
+    ui::hint(format!("{} of {} known ({})", v["matched"], v["known"], s(v, "scope")));
+    if v["truncated"] == true {
+        ui::hint("more match: raise -n or narrow the filter");
+    }
+}
+
+/// Время суток (UTC) из миллисекунд эпохи.
+fn clock(ms: u64) -> String {
+    let s = ms / 1000 % 86_400;
+    format!("{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+}
+
+/// Одна строка на событие из `discordctl watch`.
+pub fn event(ev: &Value) {
+    let time = ui::dim(clock(ev["ts"].as_u64().unwrap_or(0)));
+    let place = {
+        let ch = &ev["channel"];
+        match (s(ch, "kind"), s(ch, "name")) {
+            ("dm" | "group", n) => format!("@{n}"),
+            (_, "") => ev["channel_id"].as_str().unwrap_or("?").to_owned(),
+            (_, n) => format!("#{n}"),
+        }
+    };
+    let who = ev["user"]["display_name"].as_str().or(ev["user"]["username"].as_str()).unwrap_or("?");
+    let who = author_style(who).apply_to(who);
+    // Слова фраз переводим по отдельности, а строку целиком не трогаем: в ней чужой текст сообщения.
+    let word = |w: &str| crate::i18n::tr(w).into_owned();
+    match s(ev, "kind") {
+        "presence" => {
+            let status = s(ev, "status");
+            if ev["prev_status"].as_str() != Some(status) {
+                println!("{time} {who} {} {}", word("is now"), status_word(status));
+            }
+            for c in rows_of(&ev["changes"]) {
+                let phrase = match (s(c, "change"), s(c, "type")) {
+                    ("started", "playing") => "started playing",
+                    ("started", "streaming") => "started streaming",
+                    ("started", "listening") => "started listening to",
+                    ("started", "watching") => "started watching",
+                    ("started", "competing") => "started competing in",
+                    ("started", _) => "set a custom status",
+                    ("stopped", "playing") => "stopped playing",
+                    ("stopped", "streaming") => "stopped streaming",
+                    ("stopped", "listening") => "stopped listening to",
+                    ("stopped", "watching") => "stopped watching",
+                    ("stopped", "competing") => "stopped competing in",
+                    _ => "cleared the custom status",
+                };
+                println!("{time} {who} {} {}", word(phrase), ui::bold(s(c, "name")));
+            }
+        }
+        "message" => {
+            let m = &ev["message"];
+            let mut text = s(m, "content").replace('\n', " ⏎ ");
+            let files = rows_of(&m["attachments"]).count();
+            if files > 0 {
+                text.push_str(&word(&format!(" [{files} file(s)]")));
+            }
+            println!("{time} {} {who}: {text}", ui::dim(place));
+        }
+        "message_edit" => {
+            println!(
+                "{time} {} {} {} {}: {}",
+                ui::dim(place),
+                word("message"),
+                s(ev, "message_id"),
+                word("edited"),
+                s(ev, "content")
+            );
+        }
+        "message_delete" => {
+            println!("{time} {} {} {} {}", ui::dim(place), word("message"), s(ev, "message_id"), word("deleted"));
+        }
+        "voice_join" => println!("{time} {who} {} {}", word("joined"), ui::bold(place)),
+        "voice_leave" => println!("{time} {who} {} {}", word("left"), ui::bold(place)),
+        "voice_move" => {
+            let from = s(&ev["from_channel"], "name");
+            let from = if from.is_empty() { s(ev, "from_channel_id") } else { from };
+            println!("{time} {who} {} {from} {} {}", word("moved from"), word("to"), ui::bold(place));
+        }
+        "voice_state" => {
+            let flags: Vec<String> = s(ev, "flags")
+                .split(',')
+                .filter(|f| !f.is_empty())
+                .map(|f| match f {
+                    "muted" => word("mic off"),
+                    "deafened" => word("sound off"),
+                    "server-muted" => word("muted by server"),
+                    other => word(other),
+                })
+                .collect();
+            println!("{time} {who} {} {}: {}", word("in"), ui::bold(place), flags.join(", "));
+        }
+        "typing" => println!("{time} {who} {} {}", word("is typing in"), ui::dim(place)),
+        other => println!("{time} {other}"),
+    }
+}
+
 pub fn voice(v: &Value) {
     if v["dry_run"] == true {
         return ui::warn(format!("dry run, nothing done: {}", serde_json::to_string(v).unwrap_or_default()));

@@ -7,6 +7,7 @@
 
 mod auth;
 mod cdp;
+mod events;
 mod hook;
 mod launch;
 mod watch;
@@ -132,7 +133,7 @@ fn handle_app(app: &auth::App, req: Request, gone: &dyn Fn() -> bool) -> Respons
 }
 
 /// Запросы владельца (CLI без токена).
-fn handle_owner(req: Request) -> (Response, bool) {
+fn handle_owner(req: Request, gone: &dyn Fn() -> bool) -> (Response, bool) {
     let resp = match req {
         Request::Ping => Response::ok("pong"),
         Request::Whoami => Response::ok("owner"),
@@ -158,6 +159,23 @@ fn handle_owner(req: Request) -> (Response, bool) {
         Request::AuthList => Response::ok("apps").with_data(auth::list()),
         Request::AuthAudit { limit } => Response::ok("audit").with_data(auth::audit_tail(limit)),
         Request::Approvals => Response::ok("pending").with_data(auth::pending()),
+        Request::Events { kinds, wait_secs, max, sub, filter } => {
+            let key = format!("owner:{}", sub.as_deref().unwrap_or("default"));
+            let result = events::expand(&kinds).and_then(|k| {
+                let filter = events::PresenceFilter::parse(&filter.unwrap_or_default())?;
+                let wait = std::time::Duration::from_secs(wait_secs.min(events::MAX_WAIT));
+                let take = if max == 0 { 50 } else { max.min(events::MAX_TAKE) };
+                events::wait(&key, events::Scope::Owner, k, filter, wait, take, gone).map(|(v, _)| v)
+            });
+            match result {
+                Ok(v) => Response::ok("events").with_data(v),
+                Err(e) => Response::err(e),
+            }
+        }
+        Request::DevEmit { events: list } => {
+            events::publish(list);
+            Response::ok("emitted")
+        }
         Request::Decide { id, allow } => {
             if auth::decide(id, allow) {
                 Response::ok(if allow { "allowed" } else { "rejected" })
@@ -195,7 +213,7 @@ fn handle(conn: File) {
                 (Response::err("invalid or revoked token"), false)
             }
         },
-        None => handle_owner(env.req),
+        None => handle_owner(env.req, &|| ipc::peer_gone(&conn)),
     };
     let _ = ipc::write_response(&conn, &resp);
     if exit {
@@ -291,6 +309,7 @@ fn main() {
     thread::spawn(repair_with_retries);
     thread::spawn(repair_loop);
     thread::spawn(handler_loop);
+    events::start();
     thread::spawn(|| watch::watch_root(&Config::load().root(), repair_with_retries));
     loop {
         match listener.accept() {

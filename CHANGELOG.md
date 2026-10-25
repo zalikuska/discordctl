@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Events review fixes: a typing or message event of a server channel that arrives without a server id is no longer taken
+  for a direct chat (it could match a `dm:*` right); events say why they are not flowing when the client's event
+  dispatcher cannot be set up; `presence --status` with a wrong status is an error instead of "everybody". The
+  declared minimum Rust version is now 1.82 (the code already needed it).
+- Presence: `discordctl presence [user] [--server S] [--status online] [--activity game]` and the MCP tool `discord_presence`
+  show who is online and what they are doing (new `list` word `presence`). In events it is opt-in: `discordctl watch
+  presence --activity minecraft --status online --user alice` (MCP: kind `presence` with `filter`) reports when somebody
+  starts or stops a matching activity or enters a status. `all` never includes presence.
+- Live events: `discordctl watch [messages|voice|typing] [-c chat] [-n N] [--json]` and the MCP tool
+  `discord_wait_events` deliver new, edited and deleted messages, voice joins/leaves/moves/state changes and typing as
+  they happen. The payload subscribes to the events the Discord client already receives (nothing extra is requested),
+  the daemon filters them per listener by rights (`read` for chats, the `voices` list word for voice), keeps up to 500
+  per listener between calls and subscribes only while somebody listens. It works against a real Discord only once
+  tried there: event shapes can change between Discord builds (`selfcheck` reports whether the dispatcher is found).
+
 ## 0.1.3 - 2026-10-25
 
 - Russian interface: `discordctl lang ru` (or `en`, or `auto` for the Windows display language) is remembered; `--lang ru`

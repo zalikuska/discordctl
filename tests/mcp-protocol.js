@@ -127,7 +127,7 @@ class Mcp {
     check("a batch array is rejected as invalid (-32600)", batch.error?.code === -32600);
 
     console.log("== tools follow rights");
-    check("list shows exactly what the rights allow", JSON.stringify(await m.names()) === JSON.stringify(["discord_list_guilds", "discord_me", "discord_read_messages"]), (await m.names()).join());
+    check("list shows exactly what the rights allow", JSON.stringify(await m.names()) === JSON.stringify(["discord_list_guilds", "discord_me", "discord_read_messages", "discord_wait_events"]), (await m.names()).join());
     const defs = (await m.rpc("tools/list")).result.tools;
     check("every tool has an object schema and read-only hint", defs.every((t) => t.inputSchema.type === "object" && t.annotations.readOnlyHint === true));
     const hidden = await m.call("discord_send_message", { channel: "dm:x", content: "hi" });
@@ -149,7 +149,7 @@ class Mcp {
     const t2 = await grant("writer", { list: ["*"], read: ["*"], write: ["*"], voice: ["*"], voice_channels: ["*"], stream: ["*"] });
     const w = new Mcp(t2);
     await w.rpc("initialize", { protocolVersion: "2025-06-18" });
-    check("full rights show all 22 tools", (await w.names()).length === 22, String((await w.names()).length));
+    check("full rights show all 24 tools", (await w.names()).length === 24, String((await w.names()).length));
     await owner({ cmd: "auth_revoke", name: "writer" });
     check("revoked token: tools/list fails with a clear message", /invalid or was revoked/.test((await w.rpc("tools/list")).error?.message ?? ""));
 
@@ -196,6 +196,99 @@ class Mcp {
     await sleep(900);
     check("no progress is sent after the answer", progress.length === afterDone);
     wmcp.close();
+
+    console.log("== events: what happens in Discord reaches the agent, filtered by its rights");
+    const A = "111111111111111111", B = "222222222222222222";
+    const emit = (events) => owner({ cmd: "dev_emit", events });
+    const dmInfo = { kind: "dm", name: "someone" };
+    const msg = (channel, text) => ({ kind: "message", ts: Date.now(), channel_id: channel, guild_id: null, channel: dmInfo, message: { content: text }, user: { id: "9", display_name: "someone" } });
+    const tl = await grant("listener", { list: ["voices"], read: [`dm:${A}`], write: [] });
+    const lm = new Mcp(tl);
+    await lm.rpc("initialize", { protocolVersion: "2025-06-18" });
+    check("the events tool is offered to an app that can read or see voice", (await lm.names()).includes("discord_wait_events"));
+    const first = await lm.call("discord_wait_events", { kinds: ["all"], timeout: 1 });
+    check("the first call opens the mailbox and returns empty", !first.result.isError && /"events":\[\]/.test(first.result.content[1].text), JSON.stringify(first.result));
+    await emit([
+      msg(A, "hello from the allowed chat"),
+      msg(B, "SECRET from a chat the app may not read"),
+      { kind: "typing", ts: 1, channel_id: A, guild_id: null, channel: dmInfo, user: { id: "9", display_name: "someone" } },
+      { kind: "typing", ts: 1, channel_id: B, guild_id: null, channel: dmInfo, user: { id: "9", display_name: "someone" } },
+      // Канал сервера без guild_id в событии: чужой серверный чат не должен сойти за личный под правом на `dm:`.
+      { kind: "typing", ts: 1, channel_id: A, guild_id: null, channel: { kind: "text", guild_id: "333333333333333333" }, user: { id: "10", display_name: "guild typist" } },
+      { kind: "voice_join", ts: 1, channel_id: B, guild_id: "333333333333333333", user: { id: "9", display_name: "someone" } },
+    ]);
+    const got = await lm.call("discord_wait_events", { kinds: ["all"], timeout: 2 });
+    const body = got.result.content.map((c) => c.text).join("\n");
+    check("events come inside the untrusted-data fence", /<discord-data-[0-9a-f]+>/.test(body) && /UNTRUSTED/.test(body));
+    check("it gets its chat, its typing and voice (the voices word)", /allowed chat/.test(body) && (body.match(/"kind":"typing"/g) || []).length === 1 && /voice_join/.test(body));
+    check("it never sees the chat it may not read", !/SECRET/.test(body));
+    check("a server channel with no guild id in the event is not taken for a DM", !/guild typist/.test(body));
+    const again = await lm.call("discord_wait_events", { kinds: ["messages"], timeout: 1 });
+    check("events are delivered once", /"events":\[\]/.test(again.result.content[1].text));
+    const t0 = Date.now();
+    const waiting = lm.call("discord_wait_events", { kinds: ["messages"], timeout: 20 });
+    await sleep(400);
+    await emit([msg(A, "second message")]);
+    const prompt = await waiting;
+    check("a waiting call returns as soon as something arrives", Date.now() - t0 < 5000 && /second message/.test(prompt.result.content[1].text), String(Date.now() - t0));
+    const typo = await lm.call("discord_wait_events", { kinds: ["mesages"], timeout: 1 });
+    check("a misspelled kind is a clear error", typo.result.isError && /unknown event kind/.test(typo.result.content[0].text));
+    lm.close();
+    const tb = await grant("blind", { list: ["guilds"], read: [], write: [] });
+    const blind = new Mcp(tb);
+    await blind.rpc("initialize", { protocolVersion: "2025-06-18" });
+    check("an app with nothing to listen to does not see the tool", !(await blind.names()).includes("discord_wait_events"));
+    const denied = await blind.call("discord_wait_events", { timeout: 1 });
+    check("and cannot call it by name either", denied.result.isError);
+    blind.close();
+    const viaOwner = await owner({ cmd: "events", kinds: ["voice"], wait_secs: 1, sub: "t" });
+    await emit([{ kind: "voice_leave", ts: 1, channel_id: B, guild_id: null, user: { id: "9" } }]);
+    const viaOwner2 = await owner({ cmd: "events", kinds: ["voice"], wait_secs: 1, sub: "t" });
+    check("the owner can listen too and sees everything", viaOwner.ok && viaOwner2.data.events.length === 1);
+    check("a token cannot use the owner's events request", (await new Promise((res, rej) => {
+      const s = net.connect(pipe);
+      let b = "";
+      s.on("connect", () => s.write(JSON.stringify({ token: tl, cmd: "events" }) + "\n"));
+      s.on("data", (d) => ((b += d), b.includes("\n") && (s.end(), res(JSON.parse(b.split("\n")[0])))));
+      s.on("error", rej);
+    })).ok === false);
+
+    console.log("== presence: who is online and what they play, as events with a filter");
+    const pres = (user, status, prev, changes) => ({ kind: "presence", ts: Date.now(), channel_id: null, guild_id: null, user: { id: user, display_name: "u" + user }, status, prev_status: prev, changes: changes.map(([change, name]) => ({ change, type: "playing", name })) });
+    const text = (r) => r.result.content.map((c) => c.text).join("\n");
+    const count = (r) => (text(r).match(/"kind":"presence"/g) || []).length;
+    const tp = await grant("watcher", { list: ["presence"], read: [], write: [] });
+    const pm = new Mcp(tp);
+    await pm.rpc("initialize", { protocolVersion: "2025-06-18" });
+    const pnames = await pm.names();
+    check("an app with the presence word sees the presence tool and the events tool", pnames.includes("discord_presence") && pnames.includes("discord_wait_events"));
+    const game = { kinds: ["presence"], filter: { activity: ["minecraft"] } };
+    const opened = await pm.call("discord_wait_events", { ...game, timeout: 1 });
+    check("opening a presence listener with a filter works", !opened.result.isError, JSON.stringify(opened.result));
+    await emit([
+      pres("1", "online", "online", [["started", "Minecraft Launcher"]]),
+      pres("2", "online", "online", [["started", "Chess"]]),
+      pres("3", "online", "offline", []),
+      msg(A, "a message the presence listener must not get"),
+    ]);
+    const pg = await pm.call("discord_wait_events", { ...game, timeout: 2 });
+    check("only the person who started the game arrives", /Minecraft Launcher/.test(text(pg)) && !/Chess/.test(text(pg)) && count(pg) === 1, text(pg).slice(0, 300));
+    check("no messages come to a presence-only listener", !/must not get/.test(text(pg)));
+    const entering = { kinds: ["presence"], filter: { status: ["online"] } };
+    await pm.call("discord_wait_events", { ...entering, timeout: 1 });
+    await emit([pres("3", "online", "offline", []), pres("4", "online", "online", [["started", "Chess"]])]);
+    const pg2 = await pm.call("discord_wait_events", { ...entering, timeout: 2 });
+    check("a status filter means ENTERING the status", count(pg2) === 1 && /"id":"3"/.test(text(pg2)), text(pg2).slice(0, 300));
+    const badFilter = await pm.call("discord_wait_events", { kinds: ["presence"], filter: { status: ["away"] }, timeout: 1 });
+    check("a filter with a wrong status is a clear error", badFilter.result.isError && /not a status/.test(badFilter.result.content[0].text));
+    pm.close();
+    const rd = new Mcp(await grant("reader2", { list: ["guilds"], read: ["*"], write: [] }));
+    await rd.rpc("initialize", { protocolVersion: "2025-06-18" });
+    const noWord = await rd.call("discord_wait_events", { kinds: ["presence"], timeout: 1 });
+    check("reading chats does not give presence", noWord.result.isError && /no permission/.test(noWord.result.content[0].text));
+    const dflt = await rd.call("discord_wait_events", { timeout: 1 });
+    check("and `all` never includes presence", !dflt.result.isError && !text(dflt).includes('"presence"'), text(dflt).slice(0, 300));
+    rd.close();
 
     console.log("== daemon goes away");
     const r = new Mcp(t3);

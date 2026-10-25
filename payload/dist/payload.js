@@ -161,8 +161,8 @@
   }
   function guilds() {
     const all = Object.values(call("GuildStore", "getGuilds"));
-    const me3 = call("UserStore", "getCurrentUser");
-    return all.map((g) => ({ id: String(g.id), name: String(g.name), owner: g.ownerId === me3?.id, member_count: g.memberCount ?? null })).sort((a, b) => a.name.localeCompare(b.name));
+    const me4 = call("UserStore", "getCurrentUser");
+    return all.map((g) => ({ id: String(g.id), name: String(g.name), owner: g.ownerId === me4?.id, member_count: g.memberCount ?? null })).sort((a, b) => a.name.localeCompare(b.name));
   }
   function friends() {
     const ids = call("RelationshipStore", "getFriendIDs");
@@ -199,7 +199,7 @@
   function members(p) {
     const g = resolveGuild(p.guild);
     const gid = String(g.id);
-    const raw = call("GuildMemberStore", "getMembers", gid) ?? [];
+    const raw = guildMembersOf(gid);
     let total = null;
     try {
       const n = call("GuildMemberCountStore", "getMemberCount", gid);
@@ -228,6 +228,28 @@
       truncated: all.length > limit,
       members: all.slice(0, limit)
     };
+  }
+  function guildMembersOf(guildId) {
+    return call("GuildMemberStore", "getMembers", guildId) ?? [];
+  }
+  function findUser(query, guildId) {
+    const q = query.trim();
+    if (isId(q)) {
+      const u = call("UserStore", "getUser", q);
+      if (u) return u;
+      throw new Error(`no user with id ${q} is known to the client`);
+    }
+    const users = /* @__PURE__ */ new Map();
+    const add = (u) => {
+      if (u?.id) users.set(String(u.id), u);
+    };
+    for (const id of call("RelationshipStore", "getFriendIDs")) add(call("UserStore", "getUser", id));
+    for (const ch of call("ChannelStore", "getSortedPrivateChannels")) recipientsOf(ch).forEach(add);
+    if (guildId) {
+      for (const m of guildMembersOf(String(resolveGuild(guildId).id))) add(call("UserStore", "getUser", m.userId));
+    }
+    const items = [...users.values()].map((u) => ({ ...u, id: String(u.id) }));
+    return pick(items, q, [(u) => [userName(u), String(u.username), friendNick(String(u.id))]], "user");
   }
   function channels(guildQuery) {
     const g = resolveGuild(guildQuery);
@@ -500,8 +522,8 @@
   }
   async function readMessages(p) {
     const ch = resolveChannel(p.channel);
-    const me3 = getStore("UserStore").getCurrentUser?.();
-    if (!me3) throw new Error("not logged in yet");
+    const me4 = getStore("UserStore").getCurrentUser?.();
+    if (!me4) throw new Error("not logged in yet");
     const want = Math.min(Math.max(1, Math.floor(p.limit ?? 50)), MAX_TOTAL);
     const forward = !!p.after;
     let cursor = forward ? p.after : p.before;
@@ -511,7 +533,7 @@
       const limit = Math.min(PAGE, want - got.length);
       const query = { limit };
       if (cursor) query[forward ? "after" : "before"] = cursor;
-      const page = await apiGet(String(me3.id), `/channels/${ch.id}/messages`, query);
+      const page = await apiGet(String(me4.id), `/channels/${ch.id}/messages`, query);
       if (!Array.isArray(page)) throw new Error("unexpected response from the messages endpoint");
       if (page.length < limit) hasMore = false;
       if (!page.length) break;
@@ -638,6 +660,288 @@
     return found;
   }
 
+  // src/presence.ts
+  var TYPES = ["playing", "streaming", "listening", "watching", "custom", "competing"];
+  var STATUSES = ["online", "idle", "dnd", "offline"];
+  function activityBrief(a) {
+    return {
+      type: TYPES[a.type] ?? String(a.type),
+      name: String(a.name ?? ""),
+      state: a.state ?? null,
+      details: a.details ?? null,
+      application_id: a.application_id ?? a.applicationId ?? null,
+      since: a.timestamps?.start ?? a.created_at ?? a.createdAt ?? null
+    };
+  }
+  var activityKey = (a) => `${a.type}:${a.name}`;
+  function call2(store3, method, ...args) {
+    const s = getStore(store3);
+    const fn = s[method];
+    if (typeof fn !== "function") throw new Error(`${store3}.${method} is missing (Discord internals changed?)`);
+    return fn.apply(s, args);
+  }
+  function presenceOf(userId) {
+    let status2 = "offline";
+    let client = {};
+    let activities = [];
+    try {
+      status2 = String(call2("PresenceStore", "getStatus", userId) ?? "offline");
+    } catch (e) {
+      if (String(e).includes("is missing")) throw e;
+    }
+    try {
+      client = getStore("PresenceStore").getClientStatus?.(userId) ?? {};
+    } catch {
+    }
+    try {
+      activities = getStore("PresenceStore").getActivities?.(userId) ?? [];
+    } catch {
+    }
+    return { status: status2, client_status: client, activities: activities.map(activityBrief) };
+  }
+  var norm2 = (s) => s.trim().toLowerCase();
+  var words = (v) => (Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : []).map((x) => norm2(String(x))).filter(Boolean);
+  function presence(p) {
+    const asked = words(p.status);
+    const bad = asked.find((s) => !STATUSES.includes(s));
+    if (bad) throw new Error(`"${bad}" is not a status (online, idle, dnd, offline)`);
+    const wantStatus = asked;
+    const wantActivity = words(p.activity);
+    let ids;
+    let scope;
+    if (p.user) {
+      const u = findUser(p.user, p.guild);
+      ids = [String(u.id)];
+      scope = "user";
+    } else if (p.guild) {
+      const g = resolveGuild(p.guild);
+      ids = guildMembersOf(String(g.id)).map((m) => String(m.userId));
+      scope = `guild ${String(g.name)}`;
+    } else {
+      ids = call2("RelationshipStore", "getFriendIDs").map(String);
+      scope = "friends";
+    }
+    const all = ids.map((id) => {
+      const u = getStore("UserStore").getUser?.(id);
+      return { user: userBrief(u) ?? { id, username: null, display_name: null, bot: false }, ...presenceOf(id) };
+    });
+    const rank = (s) => STATUSES.indexOf(s) + (s === "offline" ? 10 : 0);
+    const matched = all.filter((x) => !wantStatus.length || wantStatus.includes(x.status)).filter((x) => !wantActivity.length || x.activities.some((a) => wantActivity.some((w) => norm2(a.name).includes(w)))).sort((a, b) => rank(a.status) - rank(b.status) || String(a.user.display_name).localeCompare(String(b.user.display_name)));
+    const limit = Math.min(Math.max(1, Math.floor(p.limit ?? 100) || 100), 500);
+    return { scope, known: all.length, matched: matched.length, truncated: matched.length > limit, presences: matched.slice(0, limit) };
+  }
+  function presenceMatches(f, ev) {
+    if (f.users?.length && !f.users.includes(String(ev.user?.id))) return false;
+    if (f.status?.length && !(f.status.includes(ev.status) && ev.prev_status !== ev.status)) return false;
+    if (f.activity?.length) {
+      const names = (ev.changes ?? []).map((c) => norm2(String(c.name)));
+      if (!names.some((n) => f.activity.some((w) => n.includes(norm2(w))))) return false;
+    }
+    return true;
+  }
+
+  // src/events.ts
+  var KINDS = ["message", "message_edit", "message_delete", "voice_join", "voice_leave", "voice_move", "voice_state", "typing", "presence"];
+  var MAX_QUEUE = 1e3;
+  var dispatcher = null;
+  function findDispatcher() {
+    if (dispatcher) return dispatcher;
+    const found = findByFns(["subscribe", "unsubscribe", "dispatch", "addInterceptor"]) ?? findByFns(["subscribe", "unsubscribe", "dispatch"]);
+    dispatcher = found ?? null;
+    return dispatcher;
+  }
+  var wanted = /* @__PURE__ */ new Set();
+  var queue2 = [];
+  var dropped = 0;
+  var handlers = /* @__PURE__ */ new Map();
+  var presenceFilters = null;
+  var lastPresence = /* @__PURE__ */ new Map();
+  var voice = /* @__PURE__ */ new Map();
+  function me() {
+    try {
+      const u = getStore("UserStore").getCurrentUser?.();
+      return u ? String(u.id) : null;
+    } catch {
+      return null;
+    }
+  }
+  function user(id) {
+    try {
+      const u = getStore("UserStore").getUser?.(id);
+      return userBrief(u) ?? { id: String(id), username: null, display_name: null, bot: false };
+    } catch {
+      return { id: String(id), username: null, display_name: null, bot: false };
+    }
+  }
+  function channel(id) {
+    try {
+      const ch = getStore("ChannelStore").getChannel?.(id);
+      return ch ? describeChannel(ch) : null;
+    } catch {
+      return null;
+    }
+  }
+  function push(kind, channelId, guildId, data) {
+    if (!wanted.has(kind)) return;
+    if (queue2.length >= MAX_QUEUE) {
+      queue2.shift();
+      dropped++;
+    }
+    const uid = data.user?.id;
+    const ch = channelId == null ? null : channel(channelId);
+    const guild = guildId ?? ch?.guild_id ?? null;
+    queue2.push({
+      kind,
+      ts: Date.now(),
+      channel_id: channelId == null ? null : String(channelId),
+      guild_id: guild == null ? null : String(guild),
+      channel: ch,
+      mine: uid != null && uid === me(),
+      ...data
+    });
+  }
+  var flagsOf = (v) => [v.mute || v.deaf ? "server-muted" : "", v.selfMute ? "muted" : "", v.selfDeaf ? "deafened" : "", v.selfStream ? "streaming" : "", v.selfVideo ? "video" : ""].filter(Boolean).join(",");
+  function seedVoice() {
+    voice.clear();
+    try {
+      const all = getStore("VoiceStateStore").getAllVoiceStates?.() ?? {};
+      for (const states of Object.values(all)) {
+        for (const [uid, v] of Object.entries(states ?? {})) {
+          if (v?.channelId) voice.set(String(uid), { channel: String(v.channelId), flags: flagsOf(v) });
+        }
+      }
+    } catch {
+    }
+  }
+  var onMessage = (a) => {
+    const m = a.message;
+    if (!m || a.optimistic) return;
+    push("message", a.channelId ?? m.channel_id, a.guildId ?? m.guild_id, { message: toMessage({ ...m, channel_id: m.channel_id ?? a.channelId }), user: user(m.author?.id) });
+  };
+  var onEdit = (a) => {
+    const m = a.message;
+    if (!m?.id) return;
+    push("message_edit", a.channelId ?? m.channel_id, a.guildId ?? m.guild_id, {
+      message_id: String(m.id),
+      // Правка приходит частичной: есть то, что изменилось.
+      content: typeof m.content === "string" ? m.content : null,
+      edited_timestamp: m.edited_timestamp ?? null,
+      user: m.author?.id ? user(m.author.id) : null
+    });
+  };
+  var onDelete = (a) => {
+    const ids = a.ids ?? (a.id ? [a.id] : []);
+    for (const id of ids) push("message_delete", a.channelId, a.guildId, { message_id: String(id) });
+  };
+  var onVoice = (a) => {
+    for (const v of a.voiceStates ?? []) {
+      const uid = String(v.userId);
+      const prev = voice.get(uid);
+      const now = v.channelId ? String(v.channelId) : null;
+      const flags = flagsOf(v);
+      const who = user(uid);
+      if ((prev?.channel ?? null) !== now) {
+        if (prev?.channel && now) {
+          push("voice_move", now, v.guildId, { user: who, from_channel_id: prev.channel, from_channel: channel(prev.channel) });
+        } else if (now) {
+          push("voice_join", now, v.guildId, { user: who, flags });
+        } else if (prev?.channel) {
+          push("voice_leave", prev.channel, v.guildId, { user: who });
+        }
+      } else if (now && prev && prev.flags !== flags) {
+        push("voice_state", now, v.guildId, { user: who, flags });
+      }
+      if (now) voice.set(uid, { channel: now, flags });
+      else voice.delete(uid);
+    }
+  };
+  var onTyping = (a) => push("typing", a.channelId, a.guildId, { user: user(a.userId) });
+  function seedPresence() {
+    lastPresence.clear();
+    try {
+      const store3 = getStore("PresenceStore");
+      const ids = getStore("RelationshipStore").getFriendIDs?.() ?? [];
+      for (const id of ids.slice(0, 5e3)) {
+        const acts = (store3.getActivities?.(id) ?? []).map(activityBrief);
+        lastPresence.set(String(id), { status: String(store3.getStatus?.(id) ?? "offline"), acts: new Set(acts.map(activityKey)) });
+      }
+    } catch {
+    }
+  }
+  var onPresence = (a) => {
+    if (!wanted.has("presence")) return;
+    const updates = a.updates ?? (a.user ? [a] : []);
+    for (const u of updates) {
+      const uid = String(u.user?.id ?? u.userId ?? "");
+      if (!uid) continue;
+      const status2 = String(u.status ?? "offline");
+      const acts = (u.activities ?? []).map(activityBrief);
+      const keys = new Set(acts.map(activityKey));
+      const prev = lastPresence.get(uid);
+      lastPresence.set(uid, { status: status2, acts: keys });
+      const changes = [
+        ...acts.filter((x) => !prev?.acts.has(activityKey(x))).map((x) => ({ change: "started", type: x.type, name: x.name })),
+        ...[...prev?.acts ?? []].filter((k) => !keys.has(k)).map((k) => ({ change: "stopped", type: k.split(":")[0], name: k.slice(k.indexOf(":") + 1) }))
+      ];
+      if (prev && prev.status === status2 && !changes.length) continue;
+      const ev = { user: user(uid), status: status2, prev_status: prev?.status ?? null, client_status: u.clientStatus ?? {}, activities: acts, changes };
+      if (presenceFilters && !presenceFilters.some((f) => presenceMatches(f, ev))) continue;
+      push("presence", null, u.guildId, ev);
+    }
+  };
+  var TYPES2 = [
+    ["MESSAGE_CREATE", onMessage],
+    ["MESSAGE_UPDATE", onEdit],
+    ["MESSAGE_DELETE", onDelete],
+    ["MESSAGE_DELETE_BULK", onDelete],
+    ["VOICE_STATE_UPDATES", onVoice],
+    ["TYPING_START", onTyping],
+    ["PRESENCE_UPDATES", onPresence],
+    ["PRESENCE_UPDATE", onPresence]
+  ];
+  function attach(d) {
+    if (handlers.size) return;
+    seedVoice();
+    for (const [type, fn] of TYPES2) {
+      handlers.set(type, fn);
+      d.subscribe(type, fn);
+    }
+  }
+  function detach() {
+    const d = dispatcher;
+    for (const [type, fn] of handlers) {
+      try {
+        d?.unsubscribe(type, fn);
+      } catch {
+      }
+    }
+    handlers.clear();
+    lastPresence.clear();
+    queue2 = [];
+  }
+  function watchSet(p) {
+    const kinds = (p.kinds ?? []).filter((k) => KINDS.includes(k));
+    const hadPresence = wanted.has("presence");
+    wanted = new Set(kinds);
+    presenceFilters = Array.isArray(p.presence) ? p.presence : null;
+    if (wanted.has("presence") && !hadPresence) seedPresence();
+    if (!wanted.size) {
+      detach();
+      return { watching: [], dispatcher: !!findDispatcher() };
+    }
+    const d = findDispatcher();
+    if (!d) throw new Error("the client's event dispatcher was not found (Discord internals changed?)");
+    attach(d);
+    return { watching: [...wanted], dispatcher: true };
+  }
+  function watchDrain() {
+    const events = queue2;
+    queue2 = [];
+    const lost = dropped;
+    dropped = 0;
+    return { events, dropped: lost, watching: [...wanted] };
+  }
+
   // src/voice.ts
   var sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
   var store = (name, method, ...args) => {
@@ -684,11 +988,11 @@
     }
     if (!p.guild) throw new Error("give a voice channel (Server/channel) or a server name");
     const g = resolveGuild(p.guild);
-    const voice = guildChannels(String(g.id)).filter((c) => c.type === 2 || c.type === 13);
-    const occupied = voice.map((c) => ({ channel: describeChannel(c), participants: participants(String(c.id)) })).filter((c) => c.participants.length > 0);
+    const voice2 = guildChannels(String(g.id)).filter((c) => c.type === 2 || c.type === 13);
+    const occupied = voice2.map((c) => ({ channel: describeChannel(c), participants: participants(String(c.id)) })).filter((c) => c.participants.length > 0);
     return {
       guild: { id: String(g.id), name: String(g.name) },
-      voice_channels: voice.length,
+      voice_channels: voice2.length,
       people_in_voice: occupied.reduce((n, c) => n + c.participants.length, 0),
       channels: occupied
     };
@@ -831,7 +1135,7 @@
   var isId2 = (s) => /^\d{15,25}$/.test(s);
   var DISCORD_EPOCH = 1420070400000n;
   var nonce = () => String(BigInt(Date.now()) - DISCORD_EPOCH << 22n | BigInt(Math.floor(Math.random() * 4194304)));
-  function me() {
+  function me2() {
     const u = getStore("UserStore").getCurrentUser?.();
     if (!u) throw new Error("not logged in yet");
     return String(u.id);
@@ -848,7 +1152,7 @@
   }
   var allowedMentions = (mentions) => mentions ? { parse: ["users"], replied_user: true } : { parse: [], replied_user: false };
   async function run(c, method, url, body, wrap) {
-    const uid = me();
+    const uid = me2();
     if (c.dry_run) return { dry_run: true, request: { method: method.toUpperCase(), url, body: body ?? null } };
     const res = await apiRequest(uid, method, url, { body });
     return wrap ? wrap(res) : { result: res };
@@ -935,9 +1239,9 @@
       "toggleSelfMute+toggleSelfDeaf": !!findByFns(["toggleSelfMute", "toggleSelfDeaf"])
     };
     if (Object.values(actions).some((v) => !v)) ok = false;
-    return { ok, ...buildInfo(), stores: report, actions, http: httpInfo() };
+    return { ok, ...buildInfo(), stores: report, actions, http: httpInfo(), events: { dispatcher: !!findDispatcher() } };
   }
-  function me2() {
+  function me3() {
     const u = getStore("UserStore").getCurrentUser?.();
     if (!u) throw new Error("not logged in yet");
     return { id: u.id, username: u.username };
@@ -947,7 +1251,7 @@
     status: () => status(),
     selfcheck: () => selfcheck(),
     stores: () => [...allStores().keys()].sort(),
-    me: () => me2(),
+    me: () => me3(),
     send: (p) => sendMessage({
       channel: String(p.channel ?? ""),
       content: p.content,
@@ -975,6 +1279,18 @@
     stream_start: (p) => startStream({ source: String(p.source ?? ""), audio: p.audio === true, dry_run: p.dry_run === true }),
     stream_stop: (p) => stopStream({ dry_run: p.dry_run === true }),
     voice_status: () => voiceStatus(),
+    watch_set: (p) => watchSet({
+      kinds: Array.isArray(p.kinds) ? p.kinds.map(String) : [],
+      presence: Array.isArray(p.presence) ? p.presence : null
+    }),
+    presence: (p) => presence({
+      guild: p.guild == null ? void 0 : String(p.guild),
+      user: p.user == null ? void 0 : String(p.user),
+      status: p.status,
+      activity: p.activity,
+      limit: p.limit == null ? void 0 : Number(p.limit)
+    }),
+    watch_drain: () => watchDrain(),
     voice_who: (p) => voiceWho({
       channel: p.channel == null ? void 0 : String(p.channel),
       guild: p.guild == null ? void 0 : String(p.guild)
@@ -1133,7 +1449,7 @@
     },
     methods: () => Object.keys(methods).sort()
   };
-  async function call2(method, params) {
+  async function call3(method, params) {
     try {
       const fn = Object.prototype.hasOwnProperty.call(methods, method) ? methods[method] : void 0;
       if (!fn) return JSON.stringify({ ok: false, error: `unknown method ${method}` });
@@ -1147,7 +1463,7 @@
   if (!("__discordctl" in window)) {
     installWebpackHook();
     Object.defineProperty(window, "__discordctl", {
-      value: Object.freeze({ status: () => status(), call: call2 }),
+      value: Object.freeze({ status: () => status(), call: call3 }),
       enumerable: false
     });
   }

@@ -132,6 +132,7 @@ pub fn revoke(name: &str) -> Result<bool, String> {
         audit("owner", "auth.revoke", None, "revoked", name);
         // Отзыв мгновенный, поэтому ждущие подтверждения этого приложения тоже снимаем.
         drop_pending_of(name);
+        crate::events::drop_mailbox(&format!("app:{name}"));
     }
     Ok(removed)
 }
@@ -248,6 +249,8 @@ enum Need {
     /// Вход в голосовой канал: слово `join`, канал из `voice_channels` и подтверждение.
     VoiceJoin,
     Channel(&'static str),
+    /// Подписка на события: что именно можно, зависит от прав на чтение и от слова `voices`.
+    Events,
 }
 
 /// Какие методы payload вообще доступны приложениям и что для них нужно. Всё остальное (диагностика, `describe`,
@@ -262,6 +265,8 @@ fn need(method: &str) -> Option<Need> {
         "friends" => Need::Word("list", "friends"),
         "members" => Need::Word("list", "members"),
         "voice_who" => Need::Word("list", "voices"),
+        "events" => Need::Events,
+        "presence" => Need::Word("list", "presence"),
         "stream_sources" => Need::Word("stream", "list"),
         "stream_status" => Need::Word("stream", "status"),
         "stream_stop" => Need::Word("stream", "stop"),
@@ -319,6 +324,8 @@ fn allowed_params(method: &str) -> &'static [&'static str] {
         "channels" => &["guild"],
         "members" => &["guild", "query", "limit"],
         "voice_who" => &["channel", "guild"],
+        "presence" => &["guild", "user", "status", "activity", "limit"],
+        "events" => &["kinds", "timeout", "max", "filter"],
         "messages" => &["channel", "limit", "before", "after"],
         "send" => &["channel", "content", "reply_to", "dry_run"],
         "edit" => &["channel", "message", "content", "dry_run"],
@@ -342,7 +349,10 @@ fn sanitize(method: &str, params: &Value) -> Result<Value, String> {
         for key in allowed_params(method) {
             let Some(v) = obj.get(*key).filter(|v| !v.is_null()) else { continue };
             let fits = match *key {
-                "limit" => true, // неподходящее значение ниже заменяется значением по умолчанию
+                // Числа: неподходящее значение ниже заменяется значением по умолчанию.
+                "limit" | "timeout" | "max" => true,
+                "kinds" => v.as_array().is_some_and(|a| a.iter().all(Value::is_string)),
+                "filter" => v.is_object(),
                 "dry_run" | "remove" | "mute" | "deafen" => v.is_boolean(),
                 _ => v.is_string(),
             };
@@ -355,7 +365,7 @@ fn sanitize(method: &str, params: &Value) -> Result<Value, String> {
     // Размер выдачи ограничен и здесь: приложение может говорить с демоном напрямую, минуя MCP-сервер.
     let page = match method {
         "messages" => Some((50, 200)),
-        "members" => Some((100, 500)),
+        "members" | "presence" => Some((100, 500)),
         _ => None,
     };
     if let Some((default, max)) = page {
@@ -377,6 +387,9 @@ pub fn app_call(app: &App, method: &str, params: Value, gone: &dyn Fn() -> bool)
         Ok(p) => p,
         Err(e) => return deny(&e, None),
     };
+    if method == "events" {
+        return app_events(app, &params, gone);
+    }
     let mut resource_label: Option<String> = None;
     let mut place = String::new();
     let mut scope: Option<&'static str> = None;
@@ -434,6 +447,7 @@ pub fn app_call(app: &App, method: &str, params: Value, gone: &dyn Fn() -> bool)
             place = name;
             scope = Some("voice");
         }
+        Need::Events => unreachable!("handled above"),
         Need::Channel(sc) => {
             let reference = params["channel"].as_str().unwrap_or("");
             let (res, name) = match resolve(reference, false) {
@@ -477,6 +491,42 @@ pub fn app_call(app: &App, method: &str, params: Value, gone: &dyn Fn() -> bool)
     }
 }
 
+/// Ожидание событий для приложения. Виды сужаются до того, что разрешают права; в журнал попадает только начало
+/// прослушивания, а не каждое событие.
+fn app_events(app: &App, params: &Value, gone: &dyn Fn() -> bool) -> Result<Value, String> {
+    let requested: Vec<String> = params["kinds"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+        .unwrap_or_default();
+    let scope = crate::events::Scope::App(app.permissions.clone());
+    let kinds = match crate::events::expand(&requested) {
+        Ok(k) => scope.filter_kinds(k),
+        Err(e) => {
+            audit(&app.name, "events", None, "denied", &e);
+            return Err(e);
+        }
+    };
+    if kinds.is_empty() {
+        let why = "no permission: events need `read` on a chat (messages, typing) or the `voices` list word (voice)";
+        audit(&app.name, "events", None, "denied", why);
+        return Err(why.to_owned());
+    }
+    let filter = crate::events::PresenceFilter::parse(&params["filter"])
+        .inspect_err(|e| audit(&app.name, "events", None, "denied", e))?;
+    let wait = std::time::Duration::from_secs(params["timeout"].as_u64().unwrap_or(25).min(crate::events::MAX_WAIT));
+    let take = params["max"].as_u64().map_or(50, |n| (n as usize).clamp(1, crate::events::MAX_TAKE));
+    let (value, created) =
+        crate::events::wait(&format!("app:{}", app.name), scope, kinds.clone(), filter, wait, take, gone)?;
+    if created {
+        audit(&app.name, "events", None, "allowed", &format!("listening: {}", kinds.join(", ")));
+    }
+    // Права могли отозвать, пока ждали.
+    if !still_granted(app) {
+        return Err("app was revoked".into());
+    }
+    Ok(value)
+}
+
 /// Это приложение всё ещё выдано в том же виде: по имени и хэшу токена, а не только по имени.
 fn still_granted(app: &App) -> bool {
     with_store(|s| s.apps.iter().any(|a| a.name == app.name && a.token_hash == app.token_hash))
@@ -516,6 +566,18 @@ mod tests {
             json!({ "channel": "a/b", "guild": "g" })
         );
         assert!(sanitize("members", &json!({ "guild": 5 })).is_err());
+    }
+
+    #[test]
+    fn event_calls_keep_only_their_fields_and_checked_types() {
+        assert!(matches!(need("events"), Some(Need::Events)));
+        let s = |p: Value| sanitize("events", &p);
+        assert_eq!(
+            s(json!({ "kinds": ["messages"], "timeout": 5, "max": 3, "x": 1 })).unwrap(),
+            json!({ "kinds": ["messages"], "timeout": 5, "max": 3 })
+        );
+        assert!(s(json!({ "kinds": "messages" })).is_err(), "kinds must be a list");
+        assert!(s(json!({ "kinds": [1] })).is_err(), "and a list of words");
     }
 
     #[test]

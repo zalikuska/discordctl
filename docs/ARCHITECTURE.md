@@ -76,6 +76,25 @@ manifest of rights:
 - tokens are 256-bit random values, only their SHA-256 is stored; revocation is immediate and also cancels waiting calls;
 - an audit log records decisions (never message text).
 
+**Events.** While somebody listens (`discordctl watch`, or an app calling the `events` method / `discord_wait_events`),
+the daemon asks the payload to subscribe to the client's own Flux events (`MESSAGE_CREATE/UPDATE/DELETE`,
+`VOICE_STATE_UPDATES`, `TYPING_START`) with `watch_set`, and drains its small queue every 250 ms with `watch_drain`
+(polling, not `Runtime.enable`, so Discord's console noise never reaches us). Voice joins/leaves/moves are derived by
+remembering where each person was. The daemon (`events.rs`) puts every event into a mailbox per listener: `app:<name>`
+or `owner:<name>`, 500 events at most (oldest dropped, the loss is reported), removed after two minutes without a
+call. Rights are applied **here**, not in the payload: messages, edits, deletes and typing need `read` on that chat id,
+voice events need the `voices` list word. Nobody listening means no subscription and no polling. Events lost while the
+page reloads are not replayed.
+
+*Presence* is the noisy one: it is only delivered when asked for by name (`presence` is not part of `all`), needs the
+`presence` list word, and takes a filter `{status, activity, users}`. `status` means *entering* that status (a change from
+another one), `activity` means starting or stopping an activity whose name contains the text (an activity is
+`type:name`, so a changing song or level is not a new activity), `users` are ids; all given fields must match. The same
+rule runs twice: in the daemon (authoritative, per listener) and, as a union of every listener's filters sent with
+`watch_set`, in the payload, so a busy account does not fill the 1000-event queue. The standard query (`presence`
+method) reads `PresenceStore` for friends, a server's loaded members or one person; the client only knows who it was
+told about, so big servers are incomplete.
+
 **MCP.** `discordctl-mcp` refuses to start without a token, only exposes tools the app is allowed to use, whitelists
 tool arguments, caps history pages, and wraps everything that came from Discord in a `<discord-data-ID>` block with a
 random id generated *after* the data arrived, plus a notice that it is untrusted. This reduces prompt-injection risk

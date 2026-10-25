@@ -31,7 +31,7 @@ Cursor). Если десктопного Discord нет, скрипт предл
 Хотите сначала посмотреть? Скачайте `discordctl-*-windows-x64.zip` из
 [Releases](https://github.com/zalikuska/discordctl/releases), распакуйте и запустите `discordctl.exe setup`.
 
-**Из исходников** (Rust 1.80+, Node 20+ нужен только при правках `payload/`):
+**Из исходников** (Rust 1.82+, Node 20+ нужен только при правках `payload/`):
 
 ```powershell
 git clone https://github.com/zalikuska/discordctl; cd discordctl
@@ -78,6 +78,8 @@ setup | install | update | uninstall | doctor | status | start  жизненны
 server | channel list <сервер> | chat | friend                  что у вас есть
 message read|send|edit|delete|react <цель> …                    (короткие формы: read, send)
 voice status|who|join|leave|mute|unmute|deafen|undeafen
+presence [--activity игра] [--status online]                    кто в сети и во что играет
+watch [messages|voice|typing|presence] [-c чат]                 события вживую (--json: по строке JSON)
 stream list|status|start|stop
 app add|list|remove|log|approve|whoami                          права приложений и агентов
 mcp install|status|remove                                       подключение ИИ-агентов
@@ -103,6 +105,16 @@ discordctl app approve     # держите открытым в другом о�
 - MCP-сервер не запустится без токена, показывает агенту только разрешённые инструменты и помечает всё, что пришло из
   Discord, как недоверенные данные, чтобы чужие сообщения хуже управляли моделью.
 - Все решения пишутся в журнал: `discordctl app log`.
+- **События.** Инструмент `discord_wait_events` (и `discordctl watch` для вас) отдаёт то, что происходит в Discord, по мере
+  появления: новые, изменённые и удалённые сообщения, кто зашёл в голосовой канал, вышел или перешёл, набор текста.
+  Сообщения и набор текста агент получает только из чатов, которые ему можно `read`, а голосовые события только со словом
+  `voices` в `list`. Вызов ждёт (до 45 с) и возвращается, как только что-то пришло; вызовите его снова, чтобы слушать
+  дальше, события между вызовами хранятся пару минут. У Discord ничего лишнего не запрашивается: клиент и так получает эти события.
+- **Присутствие.** `discordctl presence` (инструмент `discord_presence`) показывает, кто в сети и чем занят (играет,
+  слушает, транслирует, свой статус): друзья, загруженные участники сервера или один человек. Нужно слово `presence` в
+  `list`. Как события оно подключается явно (`all` его не включает): `discordctl watch presence --activity minecraft` или
+  `--status online --user alice` сообщает, когда кто-то *начал или бросил* игру с таким названием или *вошёл* в этот статус;
+  у инструмента то же задаётся через `filter`. Условия передаются клиенту, поэтому у загруженного аккаунта очередь не забивается.
 
 > [!IMPORTANT]
 > Токен ограничивает *MCP-подключение*, но не агента, у которого есть обычная оболочка от вашего имени: такой агент может

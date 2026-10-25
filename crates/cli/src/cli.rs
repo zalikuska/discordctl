@@ -17,6 +17,8 @@ const OVERVIEW: &str = "\
   discordctl message read|send|edit|delete|react   read and write messages (shortcuts: read, send)
   discordctl voice  join|leave|mute|unmute|deafen|undeafen|status|who
   discordctl stream list|start|stop|status
+  discordctl presence [--activity game]            who is online and what they play
+  discordctl watch [messages|voice|typing|presence]  live events (--json: one JSON line per event)
 
 \x1b[1mAI agents\x1b[0m
   discordctl mcp install                 connect Claude Code / Claude Desktop / Cursor
@@ -138,6 +140,10 @@ pub enum Cmd {
         #[command(subcommand)]
         cmd: VoiceCmd,
     },
+    /// Who is online and what they are doing (friends, or the loaded members of a server)
+    Presence(PresenceArgs),
+    /// Watch what happens: new messages, people joining voice, typing, who started a game (Ctrl+C to stop)
+    Watch(WatchArgs),
     /// Share a window or screen into the voice channel you are in
     Stream {
         #[command(subcommand)]
@@ -235,6 +241,45 @@ pub struct UpdateArgs {
     /// Do not ask (closes a running Discord if the update needs it)
     #[arg(short, long)]
     pub yes: bool,
+}
+
+#[derive(Args)]
+pub struct WatchArgs {
+    /// What to watch: messages, voice, typing, presence, all, or one kind such as voice_join (default: all but presence)
+    pub kinds: Vec<String>,
+    /// Only this chat or channel (repeatable): Server/channel, @name or an id
+    #[arg(short, long)]
+    pub channel: Vec<String>,
+    /// Stop after this many events
+    #[arg(short = 'n', long)]
+    pub count: Option<usize>,
+    /// Presence: only when somebody ENTERS this status: online, idle, dnd or offline (repeatable)
+    #[arg(long)]
+    pub status: Vec<String>,
+    /// Presence: only when somebody starts or stops something whose name contains this, e.g. a game (repeatable)
+    #[arg(long)]
+    pub activity: Vec<String>,
+    /// Presence: only this person (name or id, repeatable)
+    #[arg(long)]
+    pub user: Vec<String>,
+}
+
+#[derive(Args)]
+pub struct PresenceArgs {
+    /// One person (name or id) instead of everybody
+    pub user: Option<String>,
+    /// Members of this server that Discord has loaded, instead of friends
+    #[arg(long)]
+    pub server: Option<String>,
+    /// Only these statuses: online, idle, dnd, offline (repeatable)
+    #[arg(long)]
+    pub status: Vec<String>,
+    /// Only people doing something whose name contains this, e.g. a game (repeatable)
+    #[arg(long)]
+    pub activity: Vec<String>,
+    /// How many to show (max 500)
+    #[arg(short = 'n', long, default_value_t = 100)]
+    pub limit: u32,
 }
 
 #[derive(Args)]
@@ -468,7 +513,7 @@ pub struct AppAddArgs {
     /// Read the rights from a TOML manifest (see examples/agent.toml)
     #[arg(long, conflicts_with_all = ["list", "read", "write", "voice", "voice_channel", "stream"])]
     pub manifest: Option<PathBuf>,
-    /// Lists it may see: servers, channels, chats, friends, me, members, voices, or *
+    /// Lists it may see: servers, channels, chats, friends, me, members, voices, presence, or *
     #[arg(long, value_name = "WHAT")]
     pub list: Vec<String>,
     /// Chats it may read: @name, Server/channel, Server/*, @*, or *
@@ -538,4 +583,6 @@ pub enum DevCmd {
         #[arg(long)]
         payload: Option<PathBuf>,
     },
+    /// Put events into the queues as if Discord had sent them (for checks): a JSON array, or @file with one
+    Emit { events: String },
 }

@@ -37,6 +37,7 @@ pub fn preset_permissions(p: Preset) -> Permissions {
     }
     if p == Preset::Autonomous {
         // Всё, что умеет MCP-сервер, и без вопросов к человеку. Лимит записи в минуту в payload остаётся.
+        perms.list.push("presence".into());
         perms.voice = vec!["*".into()];
         perms.voice_channels = vec!["*".into()];
         perms.stream = vec!["*".into()];

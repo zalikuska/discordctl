@@ -14,6 +14,8 @@ pub const OVERVIEW_RU: &str = "\
   discordctl message read|send|edit|delete|react   читать и писать сообщения (короткие: read, send)
   discordctl voice  join|leave|mute|unmute|deafen|undeafen|status|who
   discordctl stream list|start|stop|status
+  discordctl presence [--activity игра]            кто в сети и во что играет
+  discordctl watch [messages|voice|typing|presence]  события вживую (--json: по одной JSON-строке на событие)
 
 \x1b[1mИИ-агенты\x1b[0m
   discordctl mcp install                 подключить Claude Code / Claude Desktop / Cursor
@@ -663,6 +665,57 @@ pub const RU: &[(&str, &str)] = &[
     ("Discord was not restarted: {}", "Discord не перезапущен: {}"),
     ("Discord was not restarted: {e}", "Discord не перезапущен: {e}"),
     ("updated to {tag}", "обновлено до {tag}"),
+    // ---- presence ----
+    ("PERSON", "ЧЕЛОВЕК"),
+    ("DOING", "ЗАНЯТИЕ"),
+    ("nobody matches", "никто не подходит"),
+    ("{} of {} known ({})", "{} из {} известных ({})"),
+    ("more match: raise -n or narrow the filter", "подходит больше: увеличьте -n или уточните фильтр"),
+    ("online", "в сети"),
+    ("idle", "неактивен"),
+    ("dnd", "не беспокоить"),
+    ("offline", "не в сети"),
+    ("playing", "играет в"),
+    ("listening", "слушает"),
+    ("watching", "смотрит"),
+    ("competing", "соревнуется в"),
+    ("custom", "статус:"),
+    ("is now", "теперь"),
+    ("started playing", "начал играть в"),
+    ("started streaming", "начал трансляцию"),
+    ("started listening to", "начал слушать"),
+    ("started watching", "начал смотреть"),
+    ("started competing in", "начал соревноваться в"),
+    ("set a custom status", "поставил статус"),
+    ("stopped playing", "перестал играть в"),
+    ("stopped streaming", "закончил трансляцию"),
+    ("stopped listening to", "перестал слушать"),
+    ("stopped watching", "перестал смотреть"),
+    ("stopped competing in", "перестал соревноваться в"),
+    ("cleared the custom status", "убрал статус"),
+    // ---- watch ----
+    ("events are not flowing: {}", "события не идут: {}"),
+    ("events must be a JSON array", "events должен быть JSON-массивом"),
+    (
+        "Discord is not attached yet: events start flowing once it is (see `discordctl doctor`)",
+        "Discord ещё не подключён: события пойдут, как только он подключится (см. `discordctl doctor`)",
+    ),
+    ("watching (Ctrl+C to stop; times in UTC)", "слежу (Ctrl+C: выход; время UTC)"),
+    ("{} events were missed (too many at once)", "пропущено событий: {} (слишком много сразу)"),
+    ("the client returned no channel id", "клиент не вернул id канала"),
+    ("message", "сообщение"),
+    ("edited", "изменено"),
+    ("deleted", "удалено"),
+    ("joined", "вошёл в"),
+    ("left", "вышел из"),
+    ("moved from", "перешёл из"),
+    ("to", "в"),
+    ("in", "в"),
+    ("is typing in", "печатает в"),
+    ("mic off", "микрофон выкл."),
+    ("sound off", "звук выкл."),
+    ("muted by server", "выключен сервером"),
+    (" [{files} file(s)]", " [файлов: {files}]"),
     // ---- состояния лаунчера (doctor, status) ----
     ("Installed", "установлен"),
     ("NeedsRepair", "нужна починка"),

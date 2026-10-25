@@ -116,6 +116,31 @@ try {
     $rm = & $ctl mcp remove --agent print --json | ConvertFrom-Json
     Check 'mcp remove is harmless when nothing is connected' (-not $rm.agents[0].config_removed)
 
+    Write-Host "== watch"
+    $watchOut = Join-Path $tmp 'watch.out'
+    $w = Start-Process $ctl -ArgumentList 'watch', '--json', '-n', '2' -RedirectStandardOutput $watchOut -PassThru -WindowStyle Hidden
+    # watch ждёт у демона; подождём, пока он займёт очередь, и подкинем события
+    $null = Wait-Until { (& $ctl --json status | ConvertFrom-Json).daemon_running } 10
+    Start-Sleep -Milliseconds 800
+    $emitFile = Join-Path $tmp 'emit.json'
+    '[{"kind":"message","ts":1000,"channel_id":"111111111111111111","guild_id":null,"message":{"content":"hi there"},"user":{"display_name":"alice"}},{"kind":"voice_join","ts":2000,"channel_id":"222222222222222222","guild_id":"3","user":{"display_name":"bob"}}]' | Set-Content $emitFile -Encoding ascii
+    & $ctl dev emit "@$emitFile" | Out-Null
+    Check 'watch --json prints each event as one JSON line and stops after -n' ((Wait-Until { $w.HasExited } 15) -and (@(Get-Content $watchOut | Where-Object { $_.Trim() }).Count -eq 2))
+    $lines = @(Get-Content $watchOut | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+    Check 'the events arrive in order and intact' ($lines[0].kind -eq 'message' -and $lines[0].message.content -eq 'hi there' -and $lines[1].kind -eq 'voice_join')
+    if (-not $w.HasExited) { Stop-Process -Id $w.Id -Force }
+
+    Write-Host "== watch presence with a filter"
+    $presOut = Join-Path $tmp 'presence.out'
+    $pw = Start-Process $ctl -ArgumentList 'watch', '--json', '-n', '1', '--activity', 'minecraft', '--status', 'online' -RedirectStandardOutput $presOut -PassThru -WindowStyle Hidden
+    Start-Sleep -Milliseconds 1500
+    '[{"kind":"presence","ts":1,"channel_id":null,"guild_id":null,"user":{"id":"7","display_name":"chess player"},"status":"online","prev_status":"online","changes":[{"change":"started","type":"playing","name":"Chess"}]},{"kind":"presence","ts":2,"channel_id":null,"guild_id":null,"user":{"id":"8","display_name":"miner"},"status":"online","prev_status":"offline","changes":[{"change":"started","type":"playing","name":"Minecraft"}]}]' | Set-Content $emitFile -Encoding ascii
+    & $ctl dev emit "@$emitFile" | Out-Null
+    $got = (Wait-Until { $pw.HasExited } 15)
+    $pl = @(Get-Content $presOut | Where-Object { $_.Trim() })
+    Check 'watch --activity passes only the person who started that game' ($got -and $pl.Count -eq 1 -and ($pl[0] | ConvertFrom-Json).user.id -eq '8')
+    if (-not $pw.HasExited) { Stop-Process -Id $pw.Id -Force }
+
     Write-Host "== uninstall"
     $null = & $ctl uninstall
     Check 'uninstall restores both files' ((Shim).update -eq 'not_installed' -and (Shim).stub -eq 'not_installed')
