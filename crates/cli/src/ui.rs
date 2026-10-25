@@ -21,13 +21,13 @@ pub fn interactive() -> bool {
 }
 
 pub fn ok(msg: impl AsRef<str>) {
-    println!("{} {}", style("✔").green().bold(), msg.as_ref());
+    println!("{} {}", style("√").green().bold(), msg.as_ref());
 }
 pub fn warn(msg: impl AsRef<str>) {
     println!("{} {}", style("!").yellow().bold(), msg.as_ref());
 }
 pub fn fail(msg: impl AsRef<str>) {
-    println!("{} {}", style("✖").red().bold(), msg.as_ref());
+    println!("{} {}", style("×").red().bold(), msg.as_ref());
 }
 pub fn info(msg: impl AsRef<str>) {
     println!("{} {}", style("•").cyan(), msg.as_ref());
@@ -115,7 +115,7 @@ impl Spinner {
             bar.set_style(
                 ProgressStyle::with_template("{spinner:.cyan} {msg}")
                     .unwrap()
-                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "✔"]),
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "√"]),
             );
             bar.set_message(msg.clone());
             bar.enable_steady_tick(Duration::from_millis(80));
@@ -141,11 +141,11 @@ impl Spinner {
         }
     }
     pub fn done(self, msg: impl AsRef<str>) {
-        let line = format!("{} {}", style("✔").green().bold(), msg.as_ref());
+        let line = format!("{} {}", style("√").green().bold(), msg.as_ref());
         self.end(line);
     }
     pub fn failed(self, msg: impl AsRef<str>) {
-        let line = format!("{} {}", style("✖").red().bold(), msg.as_ref());
+        let line = format!("{} {}", style("×").red().bold(), msg.as_ref());
         self.end(line);
     }
     /// Завершить и перейти к следующему шагу с тем же текстом.

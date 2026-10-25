@@ -202,7 +202,7 @@ impl Tui {
                                 }
                                 Line::from(spans)
                             } else {
-                                Line::from(vec![Span::styled("✔", bold(OK)), Span::raw(format!(" {l}"))])
+                                Line::from(vec![Span::styled("√", bold(OK)), Span::raw(format!(" {l}"))])
                             }
                         })
                         .collect();
@@ -263,7 +263,7 @@ fn shell(f: &mut Frame, step: usize, title: &str, hints: &[(&str, &str)]) -> Rec
             spans.push(Span::styled("  ──  ", fg(Color::Rgb(70, 74, 100))));
         }
         spans.push(match i.cmp(&step) {
-            std::cmp::Ordering::Less => Span::styled(format!("✔ {name}"), fg(OK)),
+            std::cmp::Ordering::Less => Span::styled(format!("√ {name}"), fg(OK)),
             std::cmp::Ordering::Equal => Span::styled(format!("● {name}"), bold(ACCENT)),
             std::cmp::Ordering::Greater => Span::styled(format!("○ {name}"), dim()),
         });
@@ -294,7 +294,7 @@ fn shell(f: &mut Frame, step: usize, title: &str, hints: &[(&str, &str)]) -> Rec
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// Флажок `[✔]`, переключается пробелом.
+    /// Флажок `[√]`, переключается пробелом.
     Toggle,
     /// Переключатель `(●)`: выбран ровно один.
     Radio,
@@ -395,7 +395,7 @@ impl Choice {
             let row_bg = if here { Style::new().bg(ROW_BG) } else { Style::new() };
             let pointer = if here { Span::styled("❯ ", bold(ACCENT)) } else { Span::raw("  ") };
             let mark = match it.kind {
-                Kind::Toggle if it.on => Span::styled("[✔] ", bold(OK)),
+                Kind::Toggle if it.on => Span::styled("[√] ", bold(OK)),
                 Kind::Toggle => Span::styled("[ ] ", dim()),
                 Kind::Radio if it.on => Span::styled("(●) ", bold(ACCENT)),
                 Kind::Radio => Span::styled("( ) ", dim()),

@@ -165,7 +165,7 @@ fn bullet(s: impl Into<String>) -> Line<'static> {
 }
 
 fn error_screen(tui: &mut Tui, step: usize, title: &str, e: &anyhow::Error, hint: &str) -> Result<()> {
-    let mut lines = vec![Line::from(Span::styled(format!("✖ {e}"), bold(BAD)))];
+    let mut lines = vec![Line::from(Span::styled(format!("× {e}"), bold(BAD)))];
     for cause in e.chain().skip(1) {
         lines.push(Line::from(Span::styled(format!("   caused by: {cause}"), dim())));
     }
@@ -188,7 +188,7 @@ fn check_rows(facts: &Facts, root: &Path) -> Vec<Row> {
     let mut rows = vec![];
     match &facts.app_dir {
         Some(d) => rows.push(Row {
-            mark: "✔",
+            mark: "√",
             color: OK,
             label: "Discord",
             detail: format!(
@@ -198,7 +198,7 @@ fn check_rows(facts: &Facts, root: &Path) -> Vec<Row> {
             ),
         }),
         None => rows.push(Row {
-            mark: "✖",
+            mark: "×",
             color: BAD,
             label: "Discord",
             detail: if facts.others.is_empty() {
@@ -209,7 +209,7 @@ fn check_rows(facts: &Facts, root: &Path) -> Vec<Row> {
         }),
     }
     rows.push(Row {
-        mark: if facts.installed { "✔" } else { "•" },
+        mark: if facts.installed { "√" } else { "•" },
         color: if facts.installed { OK } else { DIM },
         label: "discordctl",
         detail: if facts.installed {
@@ -705,10 +705,10 @@ fn done_lines(
     out.push(plain(""));
     for c in checks {
         let (mark, color) = match c.level {
-            Level::Ok => ("✔", OK),
+            Level::Ok => ("√", OK),
             Level::Info => ("•", DIM),
             Level::Warn => ("!", WARN),
-            Level::Fail => ("✖", BAD),
+            Level::Fail => ("×", BAD),
         };
         out.push(Line::from(vec![
             Span::styled(format!("{mark} "), bold(color)),
@@ -725,12 +725,12 @@ fn done_lines(
         for (k, r) in agents {
             match r {
                 Ok(how) => out.push(Line::from(vec![
-                    Span::styled("✔ ", bold(OK)),
+                    Span::styled("√ ", bold(OK)),
                     Span::styled(format!("{:<16}", k.title()), bold(Color::White)),
                     Span::raw(how.clone()),
                 ])),
                 Err(e) => out.push(Line::from(vec![
-                    Span::styled("✖ ", bold(BAD)),
+                    Span::styled("× ", bold(BAD)),
                     Span::styled(format!("{:<16}", k.title()), bold(Color::White)),
                     Span::raw(format!("{e:#}")),
                 ])),
@@ -859,8 +859,8 @@ mod tests {
         .unwrap();
         let s = dump(&t);
         println!("{s}");
-        assert!(s.contains("[✔] Add discordctl to PATH"));
-        assert!(s.contains("❯ [✔] Restart Discord now") && s.contains("(required)"));
+        assert!(s.contains("[√] Add discordctl to PATH"));
+        assert!(s.contains("❯ [√] Restart Discord now") && s.contains("(required)"));
         assert!(s.contains("( ) Read-only") && s.contains(" Install "));
     }
 }
@@ -906,7 +906,7 @@ mod more_tests {
         let s = dump(&t);
         println!("{s}");
         assert!(s.contains("Installed, with a note") && s.contains("Claude Code") && s.contains("discordctl chat"));
-        assert!(s.contains("✖ Cursor") && s.contains("cannot write the config"));
+        assert!(s.contains("× Cursor") && s.contains("cannot write the config"));
     }
 
     #[test]

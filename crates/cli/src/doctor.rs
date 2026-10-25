@@ -305,10 +305,10 @@ pub fn run(json_out: bool, fix: bool) -> Result<bool> {
         println!();
         for x in &checks {
             let mark = match x.level {
-                Level::Ok => console::style("✔").green().bold(),
+                Level::Ok => console::style("√").green().bold(),
                 Level::Info => console::style("•").cyan(),
                 Level::Warn => console::style("!").yellow().bold(),
-                Level::Fail => console::style("✖").red().bold(),
+                Level::Fail => console::style("×").red().bold(),
             };
             println!("{mark} {:<22} {}", console::style(x.name).bold(), x.detail);
             if let (true, Some(h)) = (x.level >= Level::Warn || x.name == "antivirus", &x.hint) {
