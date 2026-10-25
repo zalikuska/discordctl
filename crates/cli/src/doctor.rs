@@ -8,11 +8,10 @@ use discordctl_core::{
     shim::{self, State, Target},
 };
 use serde_json::{json, Value};
-use std::process::Command;
 
 use crate::{
     api::{ask, payload_call, sibling},
-    ops, ui,
+    ops, ui, winsys,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -49,23 +48,6 @@ const AV_HINT: &str = "If an antivirus (Kaspersky avp.exe is running here) block
 add the folder %LOCALAPPDATA%\\discordctl and the folder with discordctl.exe to its trusted/excluded list \
 (Kaspersky: Settings > Protection > Threats and exclusions > Manage exclusions), then run `discordctl doctor --fix`. \
 The files are unsigned and hook into another program's launch, which antivirus heuristics dislike; you can also send them to the vendor as a false positive.";
-
-fn process_running(image: &str) -> bool {
-    Command::new("tasklist")
-        .args(["/FO", "CSV", "/NH", "/FI", &format!("IMAGENAME eq {image}")])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains(&image.to_lowercase()))
-        .unwrap_or(false)
-}
-
-fn run_key_discord() -> Option<String> {
-    let out = Command::new("reg")
-        .args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run", "/v", "Discord"])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    text.lines().find(|l| l.contains("REG_SZ")).and_then(|l| l.split("REG_SZ").nth(1)).map(|s| s.trim().to_owned())
-}
 
 pub fn run(json_out: bool, fix: bool) -> Result<bool> {
     let cfg = Config::load();
@@ -202,7 +184,7 @@ pub fn run(json_out: bool, fix: bool) -> Result<bool> {
     }
 
     // --- автозапуск
-    match run_key_discord() {
+    match winsys::run_key_discord() {
         Some(v) if v.to_lowercase().contains("update.exe") => checks.push(c("autostart", Level::Ok, "Run key starts Discord through Update.exe (the shim)", None)),
         Some(v) => checks.push(c("autostart", Level::Warn, format!("Run key is {v}"), Some("Autostart bypasses discordctl. Re-enable 'Open Discord' in Discord's settings, or it starts without the pipe."))),
         None => checks.push(c("autostart", Level::Info, "Discord is not set to start with Windows", None)),
@@ -286,7 +268,7 @@ pub fn run(json_out: bool, fix: bool) -> Result<bool> {
     }
 
     // --- антивирус и логи
-    if process_running("avp.exe") {
+    if winsys::process_running("avp.exe") {
         checks.push(c("antivirus", Level::Info, "Kaspersky (avp.exe) is running", Some(AV_HINT)));
     }
     for name in ["daemon", "shim"] {

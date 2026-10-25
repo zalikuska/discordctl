@@ -73,12 +73,12 @@ try {
     Check 'doctor runs and says not installed' ($d0.checks | Where-Object { $_.name -eq 'installed binaries' -and $_.detail -eq 'not installed' })
 
     Write-Host "== one-command install"
-    $out = & $ctl install --root $root --json | ConvertFrom-Json
+    $out = & $ctl install --root $root --link-hook --json | ConvertFrom-Json
     $s = Shim
     Check 'both shims installed' ($s.update -eq 'installed' -and $s.stub -eq 'installed')
     Check 'discord:// handler now points at the stub' ((Handler) -eq $want)
     Check 'previous handler remembered for the record' ((Get-Content (Join-Path $env:DISCORDCTL_HOME 'config.json') -Raw) -match 'app-1\.0\.2')
-    Check 'install is idempotent' ((& $ctl install --root $root --json | ConvertFrom-Json).link_handler -eq 'already installed')
+    Check 'install is idempotent' ((& $ctl install --root $root --link-hook --json | ConvertFrom-Json).link_handler -eq 'already installed')
 
     Write-Host "== doctor after install"
     $d1 = & $ctl doctor --json | ConvertFrom-Json

@@ -1,6 +1,7 @@
 //! Установка и удаление: файлы, шим, настройки, PATH, перезапуск Discord.
 
 use crate::api::{ask, shim_status_value, sibling, stop_daemon};
+use crate::winsys;
 use anyhow::{bail, Context, Result};
 use discordctl_core::{
     config::Config,
@@ -9,7 +10,7 @@ use discordctl_core::{
     shim::{self, Target},
 };
 use serde_json::{json, Value};
-use std::{path::PathBuf, process::Command, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 /// Файлы, которые кладём в `bin/`. Остальные нужны всегда; MCP-сервера в сборке может не быть.
 pub const BIN_FILES: [&str; 4] =
@@ -202,19 +203,8 @@ pub fn uninstall(purge: bool) -> Result<Value> {
 
 // ---- PATH ---------------------------------------------------------------------------------------------------
 
-fn powershell(script: &str) -> Result<String> {
-    let out = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output()
-        .context("running powershell")?;
-    if !out.status.success() {
-        bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
-}
-
-fn user_path() -> Result<String> {
-    powershell("[Environment]::GetEnvironmentVariable('Path','User')")
+fn user_path() -> Result<(String, u32)> {
+    winsys::user_path().context("reading the user PATH")
 }
 
 /// PATH трогаем только в обычной установке: с пользовательским `DISCORDCTL_HOME` (тесты, портативный режим) это был бы мусор в настройках.
@@ -222,9 +212,13 @@ pub fn path_managed() -> bool {
     std::env::var_os("DISCORDCTL_HOME").is_none()
 }
 
+fn same_dir(entry: &str, bin: &str) -> bool {
+    entry.trim().trim_end_matches('\\').eq_ignore_ascii_case(bin)
+}
+
 pub fn bin_on_path() -> bool {
-    let bin = paths::bin_dir().to_string_lossy().trim_end_matches('\\').to_lowercase();
-    user_path().is_ok_and(|p| p.split(';').any(|e| e.trim_end_matches('\\').to_lowercase() == bin))
+    let bin = paths::bin_dir().to_string_lossy().trim_end_matches('\\').to_owned();
+    user_path().is_ok_and(|(p, _)| p.split(';').any(|e| same_dir(e, &bin)))
 }
 
 /// Добавляет `bin/` в PATH пользователя (новые окна терминала увидят `discordctl`).
@@ -233,45 +227,37 @@ pub fn add_bin_to_path() -> Result<bool> {
         return Ok(false);
     }
     let bin = paths::bin_dir().to_string_lossy().into_owned();
-    let cur = user_path()?;
+    let (cur, kind) = user_path()?;
     let new = if cur.is_empty() { bin } else { format!("{};{bin}", cur.trim_end_matches(';')) };
-    powershell(&format!("[Environment]::SetEnvironmentVariable('Path','{}','User')", new.replace('\'', "''")))?;
+    winsys::set_user_path(&new, kind).context("writing the user PATH")?;
     Ok(true)
 }
 
 fn remove_bin_from_path() -> Result<()> {
-    let bin = paths::bin_dir().to_string_lossy().trim_end_matches('\\').to_lowercase();
-    let cur = user_path()?;
-    let kept: Vec<&str> =
-        cur.split(';').filter(|e| !e.is_empty() && e.trim_end_matches('\\').to_lowercase() != bin).collect();
-    powershell(&format!(
-        "[Environment]::SetEnvironmentVariable('Path','{}','User')",
-        kept.join(";").replace('\'', "''")
-    ))?;
+    let bin = paths::bin_dir().to_string_lossy().trim_end_matches('\\').to_owned();
+    let (cur, kind) = user_path()?;
+    let kept: Vec<&str> = cur.split(';').filter(|e| !e.is_empty() && !same_dir(e, &bin)).collect();
+    winsys::set_user_path(&kept.join(";"), kind).context("writing the user PATH")?;
     Ok(())
 }
 
 // ---- процесс Discord -----------------------------------------------------------------------------------------
 
-/// Скрипт PowerShell над процессами Discord из этой установки (по пути к exe). Имя процесса не годится:
+/// Процессы Discord из этой установки (по пути к exe). Имя процесса не годится:
 /// у человека может быть другая установка или копия, и закрывать чужое нельзя.
-fn discord_script(root: &std::path::Path, action: &str) -> String {
-    let root = root.to_string_lossy().replace('\'', "''");
-    format!(
-        "Get-Process -Name Discord -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -and $_.Path.StartsWith('{root}', [StringComparison]::OrdinalIgnoreCase) }} | {action}"
-    )
+fn discord_pids(root: &std::path::Path) -> Vec<u32> {
+    winsys::pids_under("Discord.exe", root)
 }
 
 pub fn discord_running(root: &std::path::Path) -> bool {
-    powershell(&discord_script(root, "Measure-Object | ForEach-Object { $_.Count }"))
-        .ok()
-        .and_then(|n| n.trim().parse::<u32>().ok())
-        .is_some_and(|n| n > 0)
+    !discord_pids(root).is_empty()
 }
 
 /// Закрывает процессы Discord этой установки (звонок при этом прервётся). Возвращает, закрылись ли они.
 pub fn close_discord(root: &std::path::Path) -> bool {
-    let _ = powershell(&discord_script(root, "Stop-Process -Force"));
+    for pid in discord_pids(root) {
+        winsys::terminate(pid);
+    }
     for _ in 0..20 {
         if !discord_running(root) {
             return true;

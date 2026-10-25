@@ -12,3 +12,6 @@ path = "src/main.rs"
 discordctl-core.workspace = true
 serde_json.workspace = true
 windows-sys.workspace = true
+
+[build-dependencies]
+winresource = "0.1"

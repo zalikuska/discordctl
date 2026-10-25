@@ -35,7 +35,7 @@ Consequences:
   prevent Discord from starting. Debug flags such as `--remote-debugging-port` are refused.
 - Discord's updater overwrites the root stub several times per start; the daemon watches the folder
   (`ReadDirectoryChangesW`) and restores the shim immediately, with retries.
-- `discord://` links are pointed at the root stub (registry, HKCU) and the daemon restores the value whenever Discord
+- Optional (`--link-hook`): `discord://` links are pointed at the root stub (registry, HKCU) and the daemon restores the value whenever Discord
   rewrites it (`RegNotifyChangeKeyValue`).
 
 ## Injecting the payload

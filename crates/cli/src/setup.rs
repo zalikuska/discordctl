@@ -61,11 +61,17 @@ pub fn run(a: SetupArgs) -> Result<()> {
         ui::bold("Update.exe"),
         ui::bold("Discord.exe")
     );
-    println!("  {} point {} links at the launcher", ui::cyan("•"), ui::bold("discord://"));
     println!("  {}", ui::dim("Everything is reverted by `discordctl uninstall`. The launcher always falls back to the real Discord if something fails."));
     if !yes && !ui::confirm("Continue?", true)? {
         bail!("cancelled");
     }
+    // Запись в реестр чужого протокола антивирусы не любят, поэтому по умолчанию её нет. `None` оставляет прежний выбор.
+    let link_hook = if yes {
+        None
+    } else {
+        let already = Config::load().handler_hook;
+        Some(ui::confirm("Also point discord:// links at the launcher? (edits one registry value; optional)", already)?)
+    };
 
     // --- 2. установка
     ui::heading("2. Installing");
@@ -99,7 +105,7 @@ pub fn run(a: SetupArgs) -> Result<()> {
     }
     let mut sp = ui::Spinner::start("installing");
     let mut step = |s: &str| sp.update(s.to_owned());
-    let result = ops::install_with(root, Some(true), &mut step);
+    let result = ops::install_with(root, link_hook, &mut step);
     match result {
         Ok(r) => sp.done(format!(
             "installed {}",

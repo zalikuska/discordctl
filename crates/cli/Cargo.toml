@@ -21,3 +21,7 @@ dialoguer = { version = "0.11", default-features = false }
 discordctl-core.workspace = true
 indicatif = "0.17"
 serde_json.workspace = true
+windows-sys.workspace = true
+
+[build-dependencies]
+winresource = "0.1"

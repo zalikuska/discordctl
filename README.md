@@ -37,7 +37,8 @@ cargo build --release
 `Discord.exe` (originals are kept), starts Discord under discordctl, runs a health check, and offers to connect an AI
 agent. Everything is reversible with `discordctl uninstall`.
 
-> The programs are unsigned and hook the launch of another program, so antivirus software may complain. `discordctl doctor`
+> The programs are unsigned and hook the launch of another program, so antivirus software may complain. Install and uninstall start no
+> `powershell` and change `discord://` links only if you ask (`--link-hook`). `discordctl doctor`
 > tells you what to do ([details](#troubleshooting)).
 
 ## Quick start

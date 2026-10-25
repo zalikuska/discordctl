@@ -57,14 +57,14 @@ pub struct Cli {
 pub enum Cmd {
     /// Install everything step by step, then offer to connect an AI agent
     Setup(SetupArgs),
-    /// Install files, the launch shim and the discord:// link hook (non-interactive)
+    /// Install files and the launch shim (non-interactive); the discord:// link hook is opt-in
     Install {
         /// Discord install folder (default: %LOCALAPPDATA%\Discord)
         #[arg(long)]
         root: Option<PathBuf>,
-        /// Leave the discord:// link handler alone
+        /// Also point discord:// links at the launcher (changes a registry value under HKCU)
         #[arg(long)]
-        no_link_hook: bool,
+        link_hook: bool,
     },
     /// Put Discord back the way it was (a running Discord is not closed)
     Uninstall {

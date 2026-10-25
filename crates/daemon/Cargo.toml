@@ -10,3 +10,6 @@ serde_json.workspace = true
 windows-sys.workspace = true
 serde.workspace = true
 sha2 = "0.10"
+
+[build-dependencies]
+winresource = "0.1"

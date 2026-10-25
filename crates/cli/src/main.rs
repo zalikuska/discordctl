@@ -9,6 +9,7 @@ mod ops;
 mod render;
 mod setup;
 mod ui;
+mod winsys;
 
 use anyhow::{bail, Context, Result};
 use api::{ask, out, owner_call, payload_call, T};
@@ -44,16 +45,16 @@ fn run(cli: Cli) -> Result<()> {
             }
             setup::run(args)
         }
-        Cmd::Install { root, no_link_hook } => {
+        Cmd::Install { root, link_hook } => {
             let root = root.unwrap_or_else(paths::default_discord_root);
             if json {
-                let r = ops::install(root, Some(!no_link_hook))?;
+                let r = ops::install(root, link_hook.then_some(true))?;
                 out(true, &r, || {});
                 return Ok(());
             }
             let mut sp = ui::Spinner::start("installing");
             let mut step = |s: &str| sp.update(s.to_owned());
-            match ops::install_with(root, Some(!no_link_hook), &mut step) {
+            match ops::install_with(root, link_hook.then_some(true), &mut step) {
                 Ok(r) => {
                     sp.done(if r["changed"] == true { "installed" } else { "already installed, files refreshed" });
                     ui::info(format!("discord:// links: {}", r["link_handler"].as_str().unwrap_or("?")));

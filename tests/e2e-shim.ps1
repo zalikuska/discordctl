@@ -64,7 +64,7 @@ try {
     Write-Host "== install on both targets"
     $s = Shim
     Check 'before install: both not_installed' ($s.update -eq 'not_installed' -and $s.stub -eq 'not_installed')
-    & $ctl install --root $root --no-link-hook | Out-Null
+    & $ctl install --root $root | Out-Null
     $s = Shim
     Check 'after install: Update.exe installed' ($s.update -eq 'installed')
     Check 'after install: Discord.exe stub installed' ($s.stub -eq 'installed')
