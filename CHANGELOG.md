@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.4 - 2026-10-25
 
 - Events review fixes: a typing or message event of a server channel that arrives without a server id is no longer taken
   for a direct chat (it could match a `dm:*` right); events say why they are not flowing when the client's event

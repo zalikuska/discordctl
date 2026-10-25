@@ -295,7 +295,7 @@ dependencies = [
 
 [[package]]
 name = "discordctl"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -314,7 +314,7 @@ dependencies = [
 
 [[package]]
 name = "discordctl-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "serde",
@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "discordctl-daemon"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "discordctl-core",
  "serde",
@@ -338,7 +338,7 @@ dependencies = [
 
 [[package]]
 name = "discordctl-mcp"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "discordctl-core",
  "serde_json",
@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "discordctl-shim"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "discordctl-core",
  "winresource",
@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "fake-discord"
-version = "0.1.3"
+version = "0.1.4"
 
 [[package]]
 name = "foldhash"
