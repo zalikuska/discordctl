@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo build --release
+      - run: cargo test --release
+      - name: Sandbox end-to-end tests (fake Discord)
+        shell: pwsh
+        run: |
+          powershell -NoProfile -File tests\e2e-shim.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          powershell -NoProfile -File tests\e2e-ops.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+  payload:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: payload/package-lock.json
+      - run: npm ci
+        working-directory: payload
+      - run: npm run build
+        working-directory: payload
+      - name: The committed bundle is up to date
+        run: git diff --exit-code -- payload/dist/payload.js

@@ -1,0 +1,12 @@
+[package]
+publish = false
+name = "discordctl-daemon"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+discordctl-core.workspace = true
+serde_json.workspace = true
+windows-sys.workspace = true
+serde.workspace = true
+sha2 = "0.10"

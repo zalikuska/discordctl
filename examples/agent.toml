@@ -1,0 +1,14 @@
+# Example manifest: `discordctl app add --manifest examples/agent.toml`
+# You will be asked about every line. Names are turned into ids at approval time,
+# and rights are stored by id.
+#
+# Targets:  @alice  (a chat or group)   Server/channel   Server/*   @*   *
+
+[app]
+name = "my-agent"
+description = "Reads one group and writes to it after my approval"
+
+[permissions]
+list = ["chats"]            # servers, channels, chats, friends, me, or "*"
+read = ["@my-group"]
+write = ["@my-group"]       # every write waits for you in `discordctl app approve`

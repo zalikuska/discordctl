@@ -1,0 +1,23 @@
+[package]
+publish = false
+name = "discordctl"
+description = "Control your own Discord client from the terminal and from AI agents (MCP)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+
+[[bin]]
+name = "discordctl"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+clap_complete = "4"
+console = "0.15"
+dialoguer = { version = "0.11", default-features = false }
+discordctl-core.workspace = true
+indicatif = "0.17"
+serde_json.workspace = true

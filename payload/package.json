@@ -1,0 +1,14 @@
+{
+  "name": "discordctl-payload",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Код внутри renderer Discord. Собирается в dist/payload.js, который вшивается в discordctl-daemon.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && esbuild src/index.ts --bundle --format=iife --target=chrome140 --outfile=dist/payload.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "typescript": "5.9.3"
+  }
+}

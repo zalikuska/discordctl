@@ -1,0 +1,14 @@
+[package]
+publish = false
+name = "discordctl-mcp"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "discordctl-mcp"
+path = "src/main.rs"
+
+[dependencies]
+discordctl-core.workspace = true
+serde_json.workspace = true
+windows-sys.workspace = true

@@ -1,0 +1,14 @@
+# build output
+/target
+/dist
+
+# payload toolchain
+/payload/node_modules
+
+# local data and logs
+*.log
+*.tmp
+*.bak
+
+# private working notes (design log with personal details); never commit
+/notes
