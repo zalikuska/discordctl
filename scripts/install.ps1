@@ -6,6 +6,10 @@
 # Nothing is installed silently. Optional environment variables:
 #   DISCORDCTL_REPO     owner/name of the repository (default below)
 #   DISCORDCTL_VERSION  a tag such as v0.1.0 (default: latest)
+#   DISCORDCTL_ARGS     extra arguments for `discordctl setup`, e.g. "--yes --agent claude-code --preset read-only"
+#
+# If the Discord desktop app is missing, the script offers to download the official installer from discord.com,
+# checks that it is signed by Discord Inc. and runs it.
 & {
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -15,6 +19,36 @@ $repo = if ($env:DISCORDCTL_REPO) { $env:DISCORDCTL_REPO } else { 'zalikuska/dis
 $tag = $env:DISCORDCTL_VERSION
 
 function Step($msg) { Write-Host "  $msg" -ForegroundColor Cyan }
+
+# Where the Squirrel-installed Discord lives: the usual folder, else the uninstall entry in the registry.
+function Find-DiscordRoot {
+    $default = Join-Path $env:LOCALAPPDATA 'Discord'
+    if (Test-Path (Join-Path $default 'Update.exe')) { return $default }
+    $cmd = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Discord' -ErrorAction SilentlyContinue).UninstallString
+    if ($cmd -match '^"?(.*?)\\Update\.exe' -and (Test-Path (Join-Path $Matches[1] 'Update.exe'))) { return $Matches[1] }
+    return $null
+}
+
+function Install-Discord($tmp) {
+    $file = Join-Path $tmp 'DiscordSetup.exe'
+    Step 'downloading the official Discord installer from discord.com'
+    Invoke-WebRequest -Uri 'https://discord.com/api/download?platform=win' -OutFile $file -Headers @{ 'User-Agent' = 'discordctl-installer' }
+    $sig = Get-AuthenticodeSignature $file
+    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Discord Inc\.') {
+        throw "the downloaded installer is not signed by Discord Inc. (status: $($sig.Status)). Not running it."
+    }
+    Step 'signature ok (Discord Inc.), running the installer'
+    Start-Process $file
+    $deadline = (Get-Date).AddMinutes(5)
+    while ((Get-Date) -lt $deadline -and -not (Find-DiscordRoot)) { Start-Sleep -Seconds 2 }
+    $root = Find-DiscordRoot
+    if (-not $root) { throw 'Discord did not finish installing in 5 minutes. Install it manually and run this command again.' }
+    # The installer starts Discord itself; discordctl has to be the one that starts it, so close this first run.
+    Start-Sleep -Seconds 8
+    Get-Process -Name Discord -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) } |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+}
 
 if ($env:OS -ne 'Windows_NT') { throw 'discordctl runs on Windows only.' }
 
@@ -40,9 +74,18 @@ try {
 
     $dir = Join-Path $tmp 'pkg'
     Expand-Archive -Path $zip -DestinationPath $dir
+    if (-not (Find-DiscordRoot)) {
+        Write-Host ''
+        Write-Host '  The Discord desktop app is not installed (the browser version cannot be controlled).' -ForegroundColor Yellow
+        $answer = if ($env:DISCORDCTL_ARGS -match '(^|\s)(--yes|-y)(\s|$)') { 'y' } else { Read-Host '  Download and run the official Discord installer now? [Y/n]' }
+        if ($answer -match '^(n|no)$') { throw 'Discord is required. Install it from discord.com and run this command again.' }
+        Install-Discord $tmp
+    }
+
     Step 'starting the setup wizard'
     Write-Host ''
-    & (Join-Path $dir 'discordctl.exe') setup
+    $extra = if ($env:DISCORDCTL_ARGS) { @($env:DISCORDCTL_ARGS -split '\s+' | Where-Object { $_ }) } else { @() }
+    & (Join-Path $dir 'discordctl.exe') setup @extra
     $code = $LASTEXITCODE
     if ($code -ne 0) { throw "setup exited with code $code" }
 }

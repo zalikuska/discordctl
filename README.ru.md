@@ -22,7 +22,13 @@ irm https://raw.githubusercontent.com/zalikuska/discordctl/main/scripts/install.
 ```
 
 Скрипт скачает последний релиз, проверит SHA-256 и запустит `discordctl setup`: мастер спрашивает перед каждым
-изменением. Хотите сначала посмотреть? Скачайте `discordctl-*-windows-x64.zip` из
+изменением. Он сам найдёт Discord (обычная папка или запись об удалении в Windows), установит программы, запустит
+Discord под управлением discordctl, проверит результат и предложит выбрать ИИ-агентов (Claude Code, Claude Desktop,
+Cursor). Если десктопного Discord нет, скрипт предложит скачать официальный установщик с discord.com (сначала
+проверит подпись Discord Inc.). Для установки без вопросов задайте `DISCORDCTL_ARGS`, например
+`$env:DISCORDCTL_ARGS = '--yes --agent claude-code --preset read-only'` перед командой.
+
+Хотите сначала посмотреть? Скачайте `discordctl-*-windows-x64.zip` из
 [Releases](https://github.com/zalikuska/discordctl/releases), распакуйте и запустите `discordctl.exe setup`.
 
 **Из исходников** (Rust 1.80+, Node 20+ нужен только при правках `payload/`):

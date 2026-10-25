@@ -34,7 +34,7 @@ pub fn run(a: SetupArgs) -> Result<()> {
     if !yes && !ui::interactive() {
         bail!("setup asks questions and needs an interactive terminal; add --yes to accept the defaults (or use `discordctl install`)");
     }
-    let root = a.root.clone().unwrap_or_else(paths::default_discord_root);
+    let root = ops::locate_discord(a.root.clone());
 
     // --- 1. проверка
     ui::heading("1. Checking");
@@ -42,6 +42,10 @@ pub fn run(a: SetupArgs) -> Result<()> {
         Some(dir) => ui::ok(format!("Discord found: {}", ui::dim(dir.display().to_string()))),
         None => {
             ui::fail(format!("Discord is not installed in {}", root.display()));
+            let others = ops::other_discord_builds();
+            if !others.is_empty() {
+                ui::info(format!("Found {} instead: only the stable Discord is supported for now.", others.join(", ")));
+            }
             ui::hint("Install the desktop app from discord.com first (the browser version cannot be controlled), or pass --root <folder>.");
             bail!("Discord not found");
         }

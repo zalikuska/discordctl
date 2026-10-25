@@ -18,7 +18,6 @@ use cli::*;
 use discordctl_core::{
     client,
     config::Config,
-    paths,
     permissions::{Manifest, Permissions},
     protocol::Request,
     shim::{self, Target},
@@ -39,14 +38,14 @@ fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
         Cmd::Setup(args) => {
             if json {
-                let r = ops::install(args.root.unwrap_or_else(paths::default_discord_root), Some(true))?;
+                let r = ops::install(ops::locate_discord(args.root), None)?;
                 out(true, &r, || {});
                 return Ok(());
             }
             setup::run(args)
         }
         Cmd::Install { root, link_hook } => {
-            let root = root.unwrap_or_else(paths::default_discord_root);
+            let root = ops::locate_discord(root);
             if json {
                 let r = ops::install(root, link_hook.then_some(true))?;
                 out(true, &r, || {});

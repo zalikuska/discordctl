@@ -21,7 +21,13 @@ Windows 10/11 and the official Discord desktop app are required.
 irm https://raw.githubusercontent.com/zalikuska/discordctl/main/scripts/install.ps1 | iex
 ```
 
-It downloads the latest release, verifies its SHA-256, and runs `discordctl setup`, which asks before it changes anything.
+It downloads the latest release, verifies its SHA-256, and runs `discordctl setup`, which asks before it changes anything:
+it finds your Discord (the usual folder, or the one in the Windows uninstall entry), installs itself, starts Discord
+under discordctl, checks the result and lets you pick which AI agents to connect (Claude Code, Claude Desktop, Cursor).
+If the Discord desktop app is missing, the script offers to download the official installer from discord.com (it checks
+the Discord Inc. signature first). For unattended installs set `DISCORDCTL_ARGS`, for example
+`$env:DISCORDCTL_ARGS = '--yes --agent claude-code --preset read-only'` before the command.
+
 Prefer to look first? Download `discordctl-*-windows-x64.zip` from [Releases](https://github.com/zalikuska/discordctl/releases),
 unpack it, and run `discordctl.exe setup`.
 

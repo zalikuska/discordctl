@@ -266,3 +266,60 @@ pub fn close_discord(root: &std::path::Path) -> bool {
     }
     !discord_running(root)
 }
+
+// ---- где стоит Discord ----------------------------------------------------------------------------------------
+
+/// Папка установки из строки удаления Squirrel: `"C:\...\Discord\Update.exe" --uninstall -s`.
+fn root_from_uninstall_string(s: &str) -> Option<PathBuf> {
+    let s = s.trim().trim_start_matches('"');
+    let end = s.to_lowercase().find("update.exe")?;
+    let dir = s[..end].trim_end_matches(['\\', '/']);
+    (!dir.is_empty()).then(|| PathBuf::from(dir))
+}
+
+fn has_squirrel(root: &std::path::Path) -> bool {
+    root.join("Update.exe").is_file() && paths::latest_app_dir(root).is_some()
+}
+
+/// Где искать Discord: `--root` или `DISCORDCTL_DISCORD_ROOT` берём как есть, иначе обычное место, а если там пусто,
+/// запись об удалении в реестре (так находится Discord, поставленный не в `%LOCALAPPDATA%\Discord`).
+pub fn locate_discord(explicit: Option<PathBuf>) -> PathBuf {
+    if let Some(r) = explicit {
+        return r;
+    }
+    let default = paths::default_discord_root();
+    if std::env::var_os("DISCORDCTL_DISCORD_ROOT").is_some() || has_squirrel(&default) {
+        return default;
+    }
+    winsys::read_user_string(r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Discord", "UninstallString")
+        .ok()
+        .flatten()
+        .and_then(|(v, _)| root_from_uninstall_string(&v))
+        .filter(|r| has_squirrel(r))
+        .unwrap_or(default)
+}
+
+/// Другие сборки Discord рядом (PTB, Canary): мы их не поддерживаем, но можем объяснить, почему «не нашли».
+pub fn other_discord_builds() -> Vec<&'static str> {
+    ["DiscordPTB", "DiscordCanary", "DiscordDevelopment"]
+        .into_iter()
+        .filter(|n| paths::local_app_data().join(n).join("Update.exe").is_file())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn root_comes_from_the_squirrel_uninstall_string() {
+        let r = root_from_uninstall_string;
+        assert_eq!(
+            r(r#""C:\Users\a b\AppData\Local\Discord\Update.exe" --uninstall -s"#),
+            Some(PathBuf::from(r"C:\Users\a b\AppData\Local\Discord"))
+        );
+        assert_eq!(r(r"D:\Apps\Discord\Update.exe --uninstall"), Some(PathBuf::from(r"D:\Apps\Discord")));
+        assert_eq!(r("msiexec /x {GUID}"), None);
+        assert_eq!(r("Update.exe"), None);
+    }
+}
