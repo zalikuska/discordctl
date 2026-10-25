@@ -41,7 +41,9 @@ fn forward(real: &PathBuf, args: &[OsString]) -> ExitCode {
         return ExitCode::from(1);
     }
     match Command::new(real).args(args).status() {
-        Ok(s) => ExitCode::from(s.code().unwrap_or(1).clamp(0, 255) as u8),
+        // Код возврата отдаём как есть: `ExitCode::from(u8)` обрезал бы коды Squirrel больше 255,
+        // а отрицательные (аварийное завершение, 0xC0000005) превратил бы в «успех».
+        Ok(s) => std::process::exit(s.code().unwrap_or(1)),
         Err(e) => {
             log(&format!("cannot run {}: {e}", real.display()));
             ExitCode::from(1)

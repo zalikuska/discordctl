@@ -17,7 +17,7 @@ pub enum Request {
     Shutdown {
         force: bool,
     },
-    /// Вызвать метод payload в Discord. Пока без проверки прав (шаг 7 плана): доступно любому процессу пользователя.
+    /// Вызвать метод payload в Discord. Без токена (владелец) прав не проверяется; с токеном демон сверяет их по методу.
     Call {
         method: String,
         params: serde_json::Value,

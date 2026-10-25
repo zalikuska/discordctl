@@ -193,13 +193,6 @@ impl Permissions {
                 return Err(format!("stream: unknown item {w:?} (list, status, stop, window, screen, *)"));
             }
         }
-        for (scope, list) in [("stream", &self.stream)] {
-            for w in list {
-                if w.is_empty() || !w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '*') {
-                    return Err(format!("{scope}: bad item {w:?}"));
-                }
-            }
-        }
         if let Some(c) = &self.confirm {
             for s in c {
                 if !SCOPES.contains(&s.as_str()) {

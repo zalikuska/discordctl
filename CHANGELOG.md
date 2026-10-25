@@ -12,7 +12,16 @@
   unanswered. `tests/mcp-protocol.js` checks the protocol against a sandbox daemon.
 
 - The agent list offers only what is found on the PC (plus "show the settings"); Claude Desktop from the Microsoft
-  Store is now detected, and its config is written where that app reads it (inside the package folder).
+  Store is now detected, and its config is written where that app reads it (inside the package folder). A leftover
+  `%APPDATA%\Claude` folder after uninstalling no longer counts as "installed".
+- Approvals: a call that was approved just as the app hung up is dropped instead of executed; a call waiting for
+  approval is refused if the app was re-granted (new token or rights) in the meantime; app parameters of the wrong type
+  (for example `"remove": "false"`) are rejected, so what you are shown is what runs. Pressing a key before the
+  question appears no longer answers it.
+- The launcher passes the real program's exit code through unchanged (codes above 255 were cut, crashes read as success).
+- `Config` is written atomically; closing Discord no longer matches `DiscordPTB`/`Discord2` folders by name prefix
+  (also in `install.ps1`); `install.ps1` waits for the Discord app folder, not just `Update.exe`, before continuing.
+- Non-ASCII user names no longer break reading the Discord folder from the uninstall entry.
 
 ## 0.1.1 - 2026-10-25
 

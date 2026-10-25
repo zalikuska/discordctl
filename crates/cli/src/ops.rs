@@ -272,7 +272,8 @@ pub fn close_discord(root: &std::path::Path) -> bool {
 /// Папка установки из строки удаления Squirrel: `"C:\...\Discord\Update.exe" --uninstall -s`.
 fn root_from_uninstall_string(s: &str) -> Option<PathBuf> {
     let s = s.trim().trim_start_matches('"');
-    let end = s.to_lowercase().find("update.exe")?;
+    // ASCII-регистр: `to_lowercase` может изменить длину строки в байтах, и индекс не подошёл бы к исходной.
+    let end = s.to_ascii_lowercase().find("update.exe")?;
     let dir = s[..end].trim_end_matches(['\\', '/']);
     (!dir.is_empty()).then(|| PathBuf::from(dir))
 }
@@ -319,6 +320,11 @@ mod tests {
             Some(PathBuf::from(r"C:\Users\a b\AppData\Local\Discord"))
         );
         assert_eq!(r(r"D:\Apps\Discord\Update.exe --uninstall"), Some(PathBuf::from(r"D:\Apps\Discord")));
+        // Имя пользователя с буквой, чей нижний регистр длиннее в байтах («İ»): срез не должен съехать.
+        assert_eq!(
+            r("\"C:\\Users\\İvan\\AppData\\Local\\Discord\\Update.exe\" --uninstall -s"),
+            Some(PathBuf::from("C:\\Users\\İvan\\AppData\\Local\\Discord"))
+        );
         assert_eq!(r("msiexec /x {GUID}"), None);
         assert_eq!(r("Update.exe"), None);
     }

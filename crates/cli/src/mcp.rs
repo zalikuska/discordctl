@@ -9,7 +9,11 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use discordctl_core::{config::Config, paths, permissions::Permissions, protocol::Request};
 use serde_json::{json, Map, Value};
-use std::{os::windows::process::CommandExt, path::PathBuf, process::Command};
+use std::{
+    os::windows::process::CommandExt,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 /// Имя сервера в настройках агента.
 const SERVER: &str = "discord";
@@ -51,8 +55,22 @@ fn home() -> PathBuf {
 /// Папки настроек Claude Desktop. Версия из Microsoft Store (MSIX) хранит их не в `%APPDATA%\Claude`,
 /// а внутри каталога пакета; приложение читает именно их, поэтому они идут первыми.
 fn claude_desktop_dirs() -> Vec<PathBuf> {
+    claude_desktop_dirs_in(&paths::local_app_data(), &appdata())
+}
+
+/// Базовые папки передаются параметрами, чтобы тесты не трогали переменные окружения всего процесса.
+fn claude_desktop_dirs_in(local: &Path, roaming: &Path) -> Vec<PathBuf> {
+    let mut dirs = store_dirs_in(local);
+    let plain = roaming.join("Claude");
+    if plain.is_dir() {
+        dirs.push(plain);
+    }
+    dirs
+}
+
+fn store_dirs_in(local: &Path) -> Vec<PathBuf> {
     let mut dirs = vec![];
-    if let Ok(packages) = std::fs::read_dir(paths::local_app_data().join("Packages")) {
+    if let Ok(packages) = std::fs::read_dir(local.join("Packages")) {
         for e in packages.flatten() {
             if e.file_name().to_string_lossy().starts_with("Claude_") {
                 let d = e.path().join("LocalCache").join("Roaming").join("Claude");
@@ -62,11 +80,13 @@ fn claude_desktop_dirs() -> Vec<PathBuf> {
             }
         }
     }
-    let plain = appdata().join("Claude");
-    if plain.is_dir() {
-        dirs.push(plain);
-    }
     dirs
+}
+
+/// Claude Desktop установлен: пакет из Store или обычный установщик (`%LOCALAPPDATA%\AnthropicClaude`).
+/// Одной папки `%APPDATA%\Claude` мало: деинсталлятор оставляет её после удаления приложения.
+fn claude_desktop_installed_in(local: &Path, roaming: &Path) -> bool {
+    !store_dirs_in(local).is_empty() || (roaming.join("Claude").is_dir() && local.join("AnthropicClaude").is_dir())
 }
 
 fn config_path(a: AgentKind) -> Option<PathBuf> {
@@ -91,7 +111,7 @@ fn claude_cli() -> Option<PathBuf> {
 pub fn detected(a: AgentKind) -> bool {
     match a {
         AgentKind::ClaudeCode => claude_cli().is_some(),
-        AgentKind::ClaudeDesktop => !claude_desktop_dirs().is_empty(),
+        AgentKind::ClaudeDesktop => claude_desktop_installed_in(&paths::local_app_data(), &appdata()),
         AgentKind::Cursor => home().join(".cursor").is_dir(),
         AgentKind::Print => true,
     }
@@ -278,7 +298,8 @@ pub fn install(mut agents: Vec<AgentKind>, preset: Preset, json_mode: bool) -> R
             .map(|a| if *a == AgentKind::Print { a.title().to_owned() } else { format!("{} (found)", a.title()) })
             .collect();
         let items: Vec<&str> = titles.iter().map(String::as_str).collect();
-        let defaults: Vec<bool> = avail.iter().map(|a| *a != AgentKind::Print).collect();
+        let none_found = avail == [AgentKind::Print];
+        let defaults: Vec<bool> = avail.iter().map(|a| none_found || *a != AgentKind::Print).collect();
         let picked = ui::multiselect("Which agents should get Discord access?", &items, &defaults)?;
         agents = picked.into_iter().map(|i| avail[i]).collect();
         if agents.is_empty() {
@@ -479,21 +500,19 @@ mod store_tests {
     fn claude_desktop_from_the_store_is_found_and_preferred() {
         let tmp = std::env::temp_dir().join(format!("dctl-claude-{}", std::process::id()));
         let (local, roaming) = (tmp.join("Local"), tmp.join("Roaming"));
-        std::env::set_var("LOCALAPPDATA", &local);
-        std::env::set_var("APPDATA", &roaming);
-        assert!(!detected(AgentKind::ClaudeDesktop));
+        // Окружение процесса не трогаем: тесты идут параллельно, а пути читают и другие модули.
+        assert!(!claude_desktop_installed_in(&local, &roaming));
 
+        // Остаток после удаления (только %APPDATA%\Claude) установкой не считается.
         std::fs::create_dir_all(roaming.join("Claude")).unwrap();
-        assert!(detected(AgentKind::ClaudeDesktop));
-        assert_eq!(
-            config_path(AgentKind::ClaudeDesktop),
-            Some(roaming.join("Claude").join("claude_desktop_config.json"))
-        );
+        assert!(!claude_desktop_installed_in(&local, &roaming));
+        std::fs::create_dir_all(local.join("AnthropicClaude")).unwrap();
+        assert!(claude_desktop_installed_in(&local, &roaming));
+        assert_eq!(claude_desktop_dirs_in(&local, &roaming), vec![roaming.join("Claude")]);
 
         let pkg = local.join("Packages").join("Claude_abc123").join("LocalCache").join("Roaming").join("Claude");
         std::fs::create_dir_all(&pkg).unwrap();
-        assert_eq!(config_path(AgentKind::ClaudeDesktop), Some(pkg.join("claude_desktop_config.json")));
-        assert!(available().contains(&AgentKind::ClaudeDesktop) && available().contains(&AgentKind::Print));
+        assert_eq!(claude_desktop_dirs_in(&local, &roaming).first(), Some(&pkg));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

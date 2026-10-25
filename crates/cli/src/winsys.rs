@@ -80,7 +80,8 @@ pub fn process_running(image: &str) -> bool {
 
 /// Идентификаторы процессов `image`, чей exe лежит внутри `root`. Чужие копии с тем же именем не попадают.
 pub fn pids_under(image: &str, root: &std::path::Path) -> Vec<u32> {
-    let root = root.to_string_lossy().to_lowercase();
+    // С разделителем на конце: `...\Discord` не должен совпасть с `...\DiscordPTB` или `...\Discord2`.
+    let root = format!("{}\\", root.to_string_lossy().to_lowercase().trim_end_matches(['\\', '/']));
     processes()
         .into_iter()
         .filter(|(_, name)| name.eq_ignore_ascii_case(image))
@@ -211,6 +212,9 @@ mod tests {
         assert!(process_running(&image));
         assert!(pids_under(&image, me.parent().unwrap()).contains(&std::process::id()));
         assert!(pids_under(&image, std::path::Path::new(r"Z:\no\such\dir")).is_empty());
+        // Папка-«сосед» с тем же началом имени (Discord и DiscordPTB) не считается внутренней.
+        let dir = me.parent().unwrap().to_string_lossy().into_owned();
+        assert!(pids_under(&image, std::path::Path::new(&dir[..dir.len() - 1])).is_empty());
     }
 
     #[test]

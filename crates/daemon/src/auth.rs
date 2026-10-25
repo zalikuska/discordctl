@@ -211,6 +211,11 @@ fn ask_human(app: &str, summary: String, gone: &dyn Fn() -> bool) -> Result<(), 
     p.push(Pending { id, app: app.to_owned(), summary, decision: None });
     let deadline = std::time::Instant::now() + APPROVAL_TIMEOUT;
     let verdict = loop {
+        // Сначала «приложение ушло»: согласие на вызов, которого никто не ждёт, ничего не отправляет.
+        if gone() {
+            p.retain(|i| i.id != id);
+            return Err("the app cancelled the call or disconnected");
+        }
         let decided = p.iter().find(|i| i.id == id).and_then(|i| i.decision);
         if let Some(d) = decided {
             break Some(d);
@@ -219,14 +224,11 @@ fn ask_human(app: &str, summary: String, gone: &dyn Fn() -> bool) -> Result<(), 
         if left.is_zero() {
             break None;
         }
-        if gone() {
-            p.retain(|i| i.id != id);
-            return Err("the app cancelled the call or disconnected");
-        }
         p = DECIDED.wait_timeout(p, left.min(GONE_CHECK)).unwrap().0;
     };
     p.retain(|i| i.id != id);
     match verdict {
+        Some(true) if gone() => Err("the app cancelled the call or disconnected"),
         Some(true) => Ok(()),
         Some(false) => Err("rejected by the user"),
         None => Err("no answer from the user in time"),
@@ -327,20 +329,29 @@ fn allowed_params(method: &str) -> &'static [&'static str] {
 }
 
 /// Оставляет только разрешённые поля; страница истории ограничена так же, как в MCP-сервере.
-fn sanitize(method: &str, params: &Value) -> Value {
+/// Типы проверяются строго: подтверждение показывает человеку то, что прочитано по этим полям (`remove == true`,
+/// `message` как строка), а payload мог бы понять значение другого типа иначе.
+fn sanitize(method: &str, params: &Value) -> Result<Value, String> {
     let mut out = serde_json::Map::new();
     if let Some(obj) = params.as_object() {
         for key in allowed_params(method) {
-            if let Some(v) = obj.get(*key).filter(|v| !v.is_null()) {
-                out.insert((*key).to_owned(), v.clone());
+            let Some(v) = obj.get(*key).filter(|v| !v.is_null()) else { continue };
+            let fits = match *key {
+                "limit" => true, // неподходящее значение ниже заменяется значением по умолчанию
+                "dry_run" | "remove" | "mute" | "deafen" => v.is_boolean(),
+                _ => v.is_string(),
+            };
+            if !fits {
+                return Err(format!("parameter {key} has the wrong type"));
             }
+            out.insert((*key).to_owned(), v.clone());
         }
     }
     if method == "messages" {
         let limit = out.get("limit").and_then(Value::as_u64).unwrap_or(50).clamp(1, 200);
         out.insert("limit".into(), json!(limit));
     }
-    Value::Object(out)
+    Ok(Value::Object(out))
 }
 
 /// Проверяет вызов приложения, при необходимости ждёт человека и исполняет. Каждое решение попадает в журнал.
@@ -351,7 +362,10 @@ pub fn app_call(app: &App, method: &str, params: Value, gone: &dyn Fn() -> bool)
         Err(why.to_owned())
     };
     let Some(need) = need(method) else { return deny("method is not available to apps", None) };
-    let mut params = sanitize(method, &params);
+    let mut params = match sanitize(method, &params) {
+        Ok(p) => p,
+        Err(e) => return deny(&e, None),
+    };
     let mut resource_label: Option<String> = None;
     let mut place = String::new();
     let mut scope: Option<&'static str> = None;
@@ -434,8 +448,8 @@ pub fn app_call(app: &App, method: &str, params: Value, gone: &dyn Fn() -> bool)
             }
         }
     }
-    // Права могли отозвать, пока ждали человека.
-    if identify_name(&app.name).is_none() {
+    // Права могли отозвать или выдать заново (другой токен, другие права), пока ждали человека.
+    if !still_granted(app) {
         return deny("app was revoked", resource_label.as_deref());
     }
     let detail =
@@ -452,8 +466,9 @@ pub fn app_call(app: &App, method: &str, params: Value, gone: &dyn Fn() -> bool)
     }
 }
 
-fn identify_name(name: &str) -> Option<()> {
-    with_store(|s| s.apps.iter().find(|a| a.name == name).map(|_| ()))
+/// Это приложение всё ещё выдано в том же виде: по имени и хэшу токена, а не только по имени.
+fn still_granted(app: &App) -> bool {
+    with_store(|s| s.apps.iter().any(|a| a.name == app.name && a.token_hash == app.token_hash))
 }
 
 #[cfg(test)]
@@ -463,24 +478,34 @@ mod tests {
 
     #[test]
     fn apps_cannot_pass_pings_rings_or_sound() {
-        let send =
-            sanitize("send", &json!({ "channel": "c", "content": "hi", "mentions": true, "tts": true, "flags": 4 }));
+        let s = |m: &str, p: Value| sanitize(m, &p).unwrap();
+        let send = s("send", json!({ "channel": "c", "content": "hi", "mentions": true, "tts": true, "flags": 4 }));
         assert_eq!(send, json!({ "channel": "c", "content": "hi" }), "no pings, no extra flags");
-        assert!(sanitize("voice_join", &json!({ "channel": "v", "ring": true })).get("ring").is_none());
-        assert!(sanitize("stream_start", &json!({ "source": "window:1:0", "audio": true })).get("audio").is_none());
+        assert!(s("voice_join", json!({ "channel": "v", "ring": true })).get("ring").is_none());
+        assert!(s("stream_start", json!({ "source": "window:1:0", "audio": true })).get("audio").is_none());
         // Постоянное значение MCP-сервера для реакций проходит, остальное нет.
-        let react =
-            sanitize("react", &json!({ "channel": "c", "message": "1", "emoji": "x", "remove": true, "other": 1 }));
+        let react = s("react", json!({ "channel": "c", "message": "1", "emoji": "x", "remove": true, "other": 1 }));
         assert_eq!(react["remove"], true);
         assert!(react.get("other").is_none());
-        assert_eq!(sanitize("me", &json!({ "anything": 1 })), json!({}));
+        assert_eq!(s("me", json!({ "anything": 1 })), json!({}));
+    }
+
+    #[test]
+    fn wrong_types_are_refused_not_reinterpreted() {
+        // Человеку показали бы «ADD», а payload по «truthy» значению убрал бы реакцию.
+        let react = json!({ "channel": "c", "message": "1", "emoji": "x", "remove": "false" });
+        assert!(sanitize("react", &react).is_err());
+        assert!(sanitize("delete", &json!({ "channel": "c", "message": 123456789012345678u64 })).is_err());
+        assert!(sanitize("voice_mute", &json!({ "mute": 0 })).is_err());
+        assert!(sanitize("send", &json!({ "channel": "c", "content": ["a"] })).is_err());
     }
 
     #[test]
     fn history_page_is_clamped_in_the_daemon_too() {
-        assert_eq!(sanitize("messages", &json!({ "channel": "c", "limit": 100000 }))["limit"], 200);
-        assert_eq!(sanitize("messages", &json!({ "channel": "c" }))["limit"], 50);
-        assert_eq!(sanitize("messages", &json!({ "channel": "c", "limit": "many" }))["limit"], 50);
+        let limit = |p: Value| sanitize("messages", &p).unwrap()["limit"].clone();
+        assert_eq!(limit(json!({ "channel": "c", "limit": 100000 })), 200);
+        assert_eq!(limit(json!({ "channel": "c" })), 50);
+        assert_eq!(limit(json!({ "channel": "c", "limit": "many" })), 50);
     }
 
     #[test]

@@ -159,6 +159,10 @@ fn handle(out: &Out, inflight: &Inflight, msg: Value) {
             let (out, inflight) = (out.clone(), inflight.clone());
             let abort = Abort::default();
             let key = id.to_string();
+            // Повторный id при незавершённом вызове отклоняем: иначе отмена и снятие записи путали бы два вызова.
+            if inflight.lock().unwrap().contains_key(&key) {
+                return fail(&out, &id, -32600, "a request with this id is already in progress");
+            }
             inflight.lock().unwrap().insert(key.clone(), abort.clone());
             thread::spawn(move || {
                 let result = call_tool(&msg["params"], &abort);

@@ -21,11 +21,18 @@ $tag = $env:DISCORDCTL_VERSION
 function Step($msg) { Write-Host "  $msg" -ForegroundColor Cyan }
 
 # Where the Squirrel-installed Discord lives: the usual folder, else the uninstall entry in the registry.
+# Installed means Update.exe plus an app-* folder with Discord.exe: Update.exe appears first, while the installer is still
+# downloading, and setup must not start (or Discord be closed) before the app itself is in place.
+function Test-DiscordRoot($root) {
+    (Test-Path (Join-Path $root 'Update.exe')) -and
+        [bool](Get-ChildItem $root -Directory -Filter 'app-*' -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName 'Discord.exe') })
+}
 function Find-DiscordRoot {
     $default = Join-Path $env:LOCALAPPDATA 'Discord'
-    if (Test-Path (Join-Path $default 'Update.exe')) { return $default }
+    if (Test-DiscordRoot $default) { return $default }
     $cmd = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Discord' -ErrorAction SilentlyContinue).UninstallString
-    if ($cmd -match '^"?(.*?)\\Update\.exe' -and (Test-Path (Join-Path $Matches[1] 'Update.exe'))) { return $Matches[1] }
+    if ($cmd -match '^"?(.*?)\\Update\.exe' -and (Test-DiscordRoot $Matches[1])) { return $Matches[1] }
     return $null
 }
 
@@ -46,7 +53,7 @@ function Install-Discord($tmp) {
     # The installer starts Discord itself; discordctl has to be the one that starts it, so close this first run.
     Start-Sleep -Seconds 8
     Get-Process -Name Discord -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) } |
+        Where-Object { $_.Path -and $_.Path.StartsWith($root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) } |
         Stop-Process -Force -ErrorAction SilentlyContinue
 }
 

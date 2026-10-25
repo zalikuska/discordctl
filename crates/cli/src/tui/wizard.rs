@@ -498,7 +498,8 @@ fn pick_agents(tui: &mut Tui) -> Result<Vec<AgentKind>> {
         .iter()
         .map(|a| {
             let found = *a != AgentKind::Print;
-            let mut it = Item::toggle(a.title(), agent_desc(*a), found);
+            // Если агентов нет, «показать настройки» включён сразу: иначе «Connect» ничего бы не дал.
+            let mut it = Item::toggle(a.title(), agent_desc(*a), found || none_found);
             if found {
                 it = it.tag("found on this PC", OK);
             }

@@ -26,7 +26,11 @@ impl Config {
 
     pub fn save(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(paths::data_dir())?;
-        std::fs::write(paths::config_path(), serde_json::to_vec_pretty(self).unwrap())
+        // Через временный файл: демон, шим и CLI читают конфиг в любой момент, а оборванная или частичная запись
+        // читалась бы как «пусто» и тихо выключала бы слежение за шимом.
+        let tmp = paths::data_dir().join("config.json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec_pretty(self).unwrap())?;
+        std::fs::rename(&tmp, paths::config_path())
     }
 
     pub fn root(&self) -> PathBuf {

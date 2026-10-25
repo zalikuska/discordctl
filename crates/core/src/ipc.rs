@@ -238,34 +238,46 @@ pub fn request_abortable(pipe: &str, req: &Request, timeout: Duration, abort: &A
             Err(e) => return Err(ClientError::Io(e)),
         }
     };
-    f.write_all(line.as_bytes())
-        .and_then(|_| {
-            f.write_all(
-                b"
-",
-            )
-        })
-        .map_err(ClientError::Io)?;
-    // Ждём ответ опросом, а не блокирующим чтением: так видны и таймаут, и отмена.
+    f.write_all(line.as_bytes()).and_then(|_| f.write_all(b"\n")).map_err(ClientError::Io)?;
+    // Ждём ответ опросом, а не блокирующим чтением: так видны и таймаут, и отмена, причём до конца строки,
+    // а не только до первого байта. Первые проверки без сна: быстрый ответ не должен ждать лишних миллисекунд.
+    let mut reply: Vec<u8> = Vec::new();
+    let mut idle = 0u32;
     let mut pause = Duration::from_millis(1);
-    loop {
+    while !reply.ends_with(b"\n") && (reply.len() as u64) < MAX_REPLY {
         if abort.is_aborted() {
             return Err(ClientError::Aborted);
         }
         match available(&f) {
-            Ok(n) if n > 0 => break,
+            Ok(n) if n > 0 => {
+                let mut chunk = vec![0u8; (n as usize).min((MAX_REPLY as usize) - reply.len())];
+                let got = f.read(&mut chunk).map_err(ClientError::Io)?;
+                // Читаем до первого перевода строки: остальное в этом соединении не нужно.
+                match chunk[..got].iter().position(|b| *b == b'\n') {
+                    Some(i) => reply.extend_from_slice(&chunk[..=i]),
+                    None => reply.extend_from_slice(&chunk[..got]),
+                }
+                idle = 0;
+                pause = Duration::from_millis(1);
+                continue;
+            }
             Ok(_) => {}
+            // Демон закрыл pipe, не договорив: разберём, что пришло.
+            Err(_) if !reply.is_empty() => break,
             Err(e) => return Err(ClientError::Io(e)),
         }
         if Instant::now() >= deadline {
             return Err(ClientError::Timeout);
         }
-        thread::sleep(pause);
-        pause = (pause * 2).min(Duration::from_millis(25));
+        idle += 1;
+        if idle < 100 {
+            thread::yield_now();
+        } else {
+            thread::sleep(pause);
+            pause = (pause * 2).min(Duration::from_millis(10));
+        }
     }
-    let mut reply = String::new();
-    BufReader::new(f.take(MAX_REPLY)).read_line(&mut reply).map_err(ClientError::Io)?;
-    serde_json::from_str(reply.trim()).map_err(|e| ClientError::Bad(e.to_string()))
+    serde_json::from_slice(&reply).map_err(|e| ClientError::Bad(e.to_string()))
 }
 
 #[cfg(test)]

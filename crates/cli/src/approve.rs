@@ -36,24 +36,34 @@ pub fn ask(question: &str, default_yes: bool) -> Result<bool> {
     print!("{} {} ", question, ui::dim(if default_yes { "[Y/n]" } else { "[y/N]" }));
     std::io::stdout().flush()?;
     terminal::enable_raw_mode().context("cannot open the console for input")?;
-    let answer = loop {
-        let Event::Key(k) = event::read().context("cannot read from the console")? else { continue };
-        if k.kind != KeyEventKind::Press {
-            continue;
+    let read_answer = || -> Result<Option<bool>> {
+        // Нажатия, сделанные до появления вопроса (в очереди ввода), к нему не относятся: иначе случайное «y»
+        // подтвердило бы чужой вызов.
+        while event::poll(Duration::ZERO)? {
+            event::read()?;
         }
-        match k.code {
-            KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => break None,
-            KeyCode::Enter => break Some(default_yes),
-            KeyCode::Esc => break Some(false),
-            KeyCode::Char(c) => match c.to_lowercase().next().unwrap_or(c) {
-                'y' | 'д' => break Some(true),
-                'n' | 'н' => break Some(false),
+        loop {
+            let Event::Key(k) = event::read().context("cannot read from the console")? else { continue };
+            if k.kind != KeyEventKind::Press {
+                continue;
+            }
+            match k.code {
+                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => return Ok(None),
+                KeyCode::Enter => return Ok(Some(default_yes)),
+                KeyCode::Esc => return Ok(Some(false)),
+                KeyCode::Char(c) => match c.to_lowercase().next().unwrap_or(c) {
+                    'y' | 'д' => return Ok(Some(true)),
+                    'n' | 'н' => return Ok(Some(false)),
+                    _ => {}
+                },
                 _ => {}
-            },
-            _ => {}
+            }
         }
     };
+    // Режим консоли возвращаем и при ошибке чтения.
+    let answer = read_answer();
     let _ = terminal::disable_raw_mode();
+    let answer = answer?;
     match answer {
         Some(yes) => {
             println!("{}", if yes { "yes" } else { "no" });
