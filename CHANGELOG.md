@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 - 2026-10-25
 
 - `setup` is now a full-screen wizard (arrow keys, Space to toggle, Enter to confirm): system check, options,
   installation, connecting to Discord (with a one-key restart if Discord did not attach), choosing AI agents and rights,
@@ -8,14 +8,12 @@
 - Yes/no questions read key presses (Unicode) instead of bytes: Cyrillic `д`/`н` no longer ends with
   "stream did not contain valid UTF-8".
 - `tests/tui-sandbox.ps1` runs the wizard against a fake Discord; `DISCORDCTL_TUI_KEYS` plays key presses for checks.
-
 - `setup`/`install` find Discord in the registry uninstall entry when it is not in `%LOCALAPPDATA%\Discord`, and say so
   when only PTB or Canary is installed.
 - `install.ps1` offers to download and run the official Discord installer (signature checked) when Discord is missing,
   and passes `DISCORDCTL_ARGS` to `setup` for unattended installs.
 - `install.ps1` no longer calls the GitHub API (60 anonymous requests an hour per IP, which people on a shared IP hit):
   it resolves the latest tag from the `releases/latest` redirect and downloads files by their fixed URLs.
-
 - The launcher refuses to start a `*.real.exe` that is itself a launcher (it used to re-spawn itself without end), and
   `doctor`/`install` report such an install as broken.
 
