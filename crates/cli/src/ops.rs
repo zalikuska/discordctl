@@ -1,7 +1,7 @@
 //! Установка и удаление: файлы, шим, настройки, PATH, перезапуск Discord.
 
 use crate::api::{ask, shim_status_value, sibling, stop_daemon};
-use crate::winsys;
+use crate::{ui, winsys};
 use anyhow::{bail, Context, Result};
 use discordctl_core::{
     config::Config,
@@ -23,15 +23,29 @@ fn optional(name: &str) -> bool {
 /// Копирует собранные файлы в `bin/`. Работающий демон держит свой exe, поэтому вызывающий сначала останавливает его.
 /// Если CLI запущен уже из `bin/`, сам себя не копирует.
 pub fn copy_binaries() -> Result<PathBuf> {
+    copy_binaries_from(None)
+}
+
+/// То же из папки `from` (распакованный релиз) или, если её нет, из папки рядом с этим exe.
+pub fn copy_binaries_from(from: Option<&std::path::Path>) -> Result<PathBuf> {
     let bin = paths::bin_dir();
     std::fs::create_dir_all(&bin)?;
     for name in BIN_FILES {
-        match sibling(name) {
+        // Остатки прошлых обновлений: занятый exe нельзя перезаписать, но можно переименовать (см. ниже).
+        let _ = std::fs::remove_file(bin.join(format!("{name}.old")));
+    }
+    for name in BIN_FILES {
+        let found = match from {
+            Some(dir) if dir.join(name).is_file() => Ok(dir.join(name)),
+            Some(dir) => Err(anyhow::anyhow!("{} not found", dir.join(name).display())),
+            None => sibling(name),
+        };
+        match found {
             Ok(src) => {
                 let dst = bin.join(name);
                 let same = std::fs::canonicalize(&src).ok() == std::fs::canonicalize(&dst).ok() && dst.exists();
                 if !same {
-                    std::fs::copy(&src, &dst).with_context(|| format!("copying {name}"))?;
+                    copy_replacing(&src, &dst).with_context(|| format!("copying {name}"))?;
                 }
             }
             Err(_) if optional(name) => {}
@@ -39,6 +53,25 @@ pub fn copy_binaries() -> Result<PathBuf> {
         }
     }
     Ok(bin)
+}
+
+/// Копирует файл поверх `dst`. Запущенный exe (например, `discordctl.exe`, который сам ведёт обновление) нельзя
+/// перезаписать, но можно переименовать: старый уезжает в `<имя>.old` и удаляется при следующей установке.
+fn copy_replacing(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    match std::fs::copy(src, dst) {
+        Ok(_) => Ok(()),
+        Err(first) if dst.exists() => {
+            let mut aside = dst.as_os_str().to_owned();
+            aside.push(".old");
+            let aside = PathBuf::from(aside);
+            let _ = std::fs::remove_file(&aside);
+            std::fs::rename(dst, &aside).map_err(|_| first)?;
+            std::fs::copy(src, dst).map(|_| ()).inspect_err(|_| {
+                let _ = std::fs::rename(&aside, dst);
+            })
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Подменяет `Update.exe` и корневую заглушку шимом; при сбое возвращает уже сделанное.
@@ -125,7 +158,10 @@ pub fn uninstall(purge: bool) -> Result<Value> {
         }
         crate::approve::require_terminal()?;
         let dir = paths::data_dir();
-        println!("--purge will delete {} including the app tokens (apps.json) and the audit log.", dir.display());
+        ui::say(format!(
+            "--purge will delete {} including the app tokens (apps.json) and the audit log.",
+            dir.display()
+        ));
         if !crate::approve::ask("Delete it?", false)? {
             bail!("cancelled");
         }

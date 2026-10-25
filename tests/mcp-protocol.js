@@ -39,8 +39,8 @@ function owner(req) {
 }
 
 class Mcp {
-  constructor(token) {
-    this.p = spawn(path.join(bin, "discordctl-mcp.exe"), [], { env: { ...env, DISCORDCTL_TOKEN: token }, stdio: ["pipe", "pipe", "pipe"] });
+  constructor(token, extraEnv = {}) {
+    this.p = spawn(path.join(bin, "discordctl-mcp.exe"), [], { env: { ...env, ...extraEnv, DISCORDCTL_TOKEN: token }, stdio: ["pipe", "pipe", "pipe"] });
     this.n = 0;
     this.waiting = new Map();
     this.lines = [];
@@ -54,6 +54,7 @@ class Mcp {
         buf = buf.slice(i + 1);
         this.lines.push(line);
         const m = JSON.parse(line);
+        if (m.id === undefined) this.onNotification?.(m);
         this.waiting.get(m.id)?.(m);
       }
     });
@@ -148,7 +149,7 @@ class Mcp {
     const t2 = await grant("writer", { list: ["*"], read: ["*"], write: ["*"], voice: ["*"], voice_channels: ["*"], stream: ["*"] });
     const w = new Mcp(t2);
     await w.rpc("initialize", { protocolVersion: "2025-06-18" });
-    check("full rights show all 20 tools", (await w.names()).length === 20, String((await w.names()).length));
+    check("full rights show all 22 tools", (await w.names()).length === 22, String((await w.names()).length));
     await owner({ cmd: "auth_revoke", name: "writer" });
     check("revoked token: tools/list fails with a clear message", /invalid or was revoked/.test((await w.rpc("tools/list")).error?.message ?? ""));
 
@@ -170,6 +171,31 @@ class Mcp {
       s.on("error", rej);
     });
     check("a token cannot reach internal payload methods", raw.ok === false && /not available to apps/.test(raw.msg));
+
+    console.log("== a call that waits for the owner stays alive");
+    // Права на голос без канала: сам вызов `voice_leave` упирается только в подтверждение человека, Discord не нужен.
+    const t4 = await grant("waiter", { list: [], read: [], write: [], voice: ["leave"] });
+    const wmcp = new Mcp(t4, { DISCORDCTL_MCP_PROGRESS_MS: "300" });
+    await wmcp.rpc("initialize", { protocolVersion: "2025-06-18" });
+    const progress = [];
+    wmcp.onNotification = (m) => m.method === "notifications/progress" && progress.push(m.params);
+    const pending = wmcp.rpc("tools/call", { name: "discord_voice_leave", arguments: {}, _meta: { progressToken: "tok-1" } });
+    let queued = [];
+    for (let i = 0; i < 40 && !queued.length; i++) {
+      await sleep(100);
+      queued = (await owner({ cmd: "approvals" })).data;
+    }
+    check("the call waits in the approval queue", queued.length === 1 && queued[0].app === "waiter");
+    await sleep(1000);
+    check("progress notifications arrive while it waits, with the client's token and growing numbers", progress.length >= 2 && progress.every((p) => p.progressToken === "tok-1") && progress[1].progress > progress[0].progress, JSON.stringify(progress));
+    check("ping is answered while the call waits", (await wmcp.rpc("ping")).result !== undefined);
+    await owner({ cmd: "decide", id: queued[0].id, allow: false });
+    const rejected = await pending;
+    check("rejecting finishes the call with a clear error", rejected.result.isError && /rejected/.test(rejected.result.content[0].text), JSON.stringify(rejected.result));
+    const afterDone = progress.length;
+    await sleep(900);
+    check("no progress is sent after the answer", progress.length === afterDone);
+    wmcp.close();
 
     console.log("== daemon goes away");
     const r = new Mcp(t3);

@@ -1,11 +1,11 @@
 // Методы, доступные снаружи через `call(метод, параметры)`. Результат обязан сериализоваться в JSON.
 
-import { channels, describeChannel, dms, friends, guilds, resolveChannel } from "./directory";
+import { channels, describeChannel, dms, friends, guilds, members, resolveChannel } from "./directory";
 import { describeCandidates, httpInfo, writeBudget } from "./http";
 import { readMessages } from "./messages";
 import { findByFns } from "./modules";
 import { startStream, stopStream, streamSources, streamStatus } from "./stream";
-import { joinVoice, leaveVoice, setDeafen, setMute, voiceStatus } from "./voice";
+import { joinVoice, leaveVoice, setDeafen, setMute, voiceStatus, voiceWho } from "./voice";
 import { deleteMessage, editMessage, react, sendMessage } from "./write";
 import { allStores, getStore, missingStores, REQUIRED } from "./stores";
 import { mainRuntime, webpackInfo } from "./webpack";
@@ -109,6 +109,17 @@ const methods: Record<string, Method> = {
   stream_start: (p) => startStream({ source: String(p.source ?? ""), audio: p.audio === true, dry_run: p.dry_run === true }),
   stream_stop: (p) => stopStream({ dry_run: p.dry_run === true }),
   voice_status: () => voiceStatus(),
+  voice_who: (p) =>
+    voiceWho({
+      channel: p.channel == null ? undefined : String(p.channel),
+      guild: p.guild == null ? undefined : String(p.guild),
+    }),
+  members: (p) =>
+    members({
+      guild: String(p.guild ?? ""),
+      query: p.query == null ? undefined : String(p.query),
+      limit: p.limit == null ? undefined : Number(p.limit),
+    }),
   voice_join: (p) => joinVoice({ channel: String(p.channel ?? ""), ring: p.ring === true, dry_run: p.dry_run === true }),
   voice_leave: (p) => leaveVoice({ dry_run: p.dry_run === true }),
   voice_mute: (p) => setMute(p.mute !== false, p.dry_run === true),

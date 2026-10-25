@@ -17,6 +17,9 @@ pub struct Config {
     /// Что стояло в обработчике до нас (для отката).
     #[serde(default)]
     pub handler_original: Option<String>,
+    /// Язык интерфейса: `ru` или `auto`; пусто — английский.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<String>,
 }
 
 impl Config {

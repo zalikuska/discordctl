@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- Russian interface: `discordctl lang ru` (or `en`, or `auto` for the Windows display language) is remembered; `--lang ru`
+  and `DISCORDCTL_LANG=ru` override it for one run (for the one-line installer: `DISCORDCTL_ARGS="--lang ru"`). Messages,
+  `--help`, `doctor` and the wizard are translated; in the wizard Ctrl+L switches the language on the spot. `--json`
+  output and command names stay English. Text without a translation is shown in English.
+- Who is where: `discordctl voice who <Server/channel>` or `voice who --server <name>` shows who is in a voice channel
+  (or in every occupied voice channel of a server), and `discordctl server members <server> [-f name] [-n 100]` lists
+  the members of a server. Members are the ones the Discord client has already loaded: big servers load gradually, so
+  the answer says `loaded` and `total_members`. MCP gets the same as `discord_voice_who` and `discord_list_members`,
+  opened by the new `list` words `voices` and `members` (included in both presets and in `*`).
+- MCP timeouts (seen in Cursor): a call that waits for your approval now gives up after 55 seconds with a clear
+  message ("answer with `discordctl app approve`") instead of 120, because agent clients drop a call after about a minute
+  and showed only "timeout"; while it waits the server sends `notifications/progress` every 10 s (when the client sent a
+  `progressToken`) so clients that understand it keep the call alive. `tools/list` no longer blocks other requests, and
+  starting the daemon is waited for 20 s instead of almost three minutes.
+- New `discordctl update`: finds the newest release without the GitHub API, downloads it over the system's HTTPS (WinHTTP, no
+  PowerShell or curl), checks its SHA-256 against `SHA256SUMS.txt`, and installs it, replacing even the running
+  `discordctl.exe`. `--check` only looks, `--no-install` only downloads and unpacks, `--release v0.1.1` picks a version,
+  `--yes` skips questions. A running attached Discord is closed (after asking) and started again.
+- New MCP preset **autonomous**: write, voice and screen sharing with no approval prompts (`mcp install --preset
+  autonomous`, or in the wizard). It is never the default, shows a red warning, and the confirmation button starts on
+  "Don't allow". `discordctl mcp remove` takes it away.
+- `doctor` no longer warns about autostart when the Run key starts Discord through the root `Discord.exe`
+  (newer Discord builds write that): the shim sits there too.
+
 ## 0.1.2 - 2026-10-25
 
 - MCP: the daemon itself keeps only the declared fields of an app's call (no `mentions`, `ring` or `audio`, history

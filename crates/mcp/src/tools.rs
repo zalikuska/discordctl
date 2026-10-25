@@ -75,6 +75,47 @@ pub fn all() -> Vec<Tool> {
             schema: || obj(json!({ "guild": { "type": "string", "description": "Server name or id." } }), &["guild"]),
         },
         Tool {
+            name: "discord_list_members",
+            method: "members",
+            description: "List the members of one server that the Discord client has loaded (large servers load \
+                gradually, so `loaded` may be below `total_members`). Optionally filter by name.",
+            needs: Needs::List("members"),
+            allowed: &["guild", "query", "limit"],
+            fixed: &[],
+            read_only: true,
+            destructive: false,
+            schema: || {
+                obj(
+                    json!({
+                        "guild": { "type": "string", "description": "Server name or id." },
+                        "query": { "type": "string", "description": "Only members whose name, username or nickname contains this." },
+                        "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 100, "description": "How many members to return (max 500)." }
+                    }),
+                    &["guild"],
+                )
+            },
+        },
+        Tool {
+            name: "discord_voice_who",
+            method: "voice_who",
+            description: "Show who is in voice channels: give `channel` for one voice channel (or a call in a chat), or \
+                `guild` for every voice channel of a server that has people in it. Reads the client's state only.",
+            needs: Needs::List("voices"),
+            allowed: &["channel", "guild"],
+            fixed: &[],
+            read_only: true,
+            destructive: false,
+            schema: || {
+                obj(
+                    json!({
+                        "channel": { "type": "string", "description": "Voice channel: `<server>/<channel>`, a channel id, or `dm:<name>` for a call in a chat." },
+                        "guild": { "type": "string", "description": "Server name or id: lists every occupied voice channel there." }
+                    }),
+                    &[],
+                )
+            },
+        },
+        Tool {
             name: "discord_list_dms",
             method: "dms",
             description: "List direct chats and group chats, newest first.",
@@ -385,8 +426,13 @@ impl Tool {
             out.insert((*k).to_owned(), json!(v));
         }
         // Размер страницы ограничен: огромная история забьёт контекст модели.
-        if self.method == "messages" {
-            let limit = out.get("limit").and_then(Value::as_u64).unwrap_or(50).clamp(1, 200);
+        let page = match self.method {
+            "messages" => Some((50, 200)),
+            "members" => Some((100, 500)),
+            _ => None,
+        };
+        if let Some((default, max)) = page {
+            let limit = out.get("limit").and_then(Value::as_u64).unwrap_or(default).clamp(1, max);
             out.insert("limit".into(), json!(limit));
         }
         Value::Object(out)
@@ -427,6 +473,20 @@ mod tests {
         assert_eq!(t.params(&json!({ "channel": "c", "limit": 5000 }))["limit"], 200);
         assert_eq!(t.params(&json!({ "channel": "c" }))["limit"], 50);
         assert_eq!(t.params(&json!({ "channel": "c", "limit": 0 }))["limit"], 1);
+    }
+
+    #[test]
+    fn member_and_voice_lists_follow_list_permissions() {
+        let only_guilds = json!({ "list": ["guilds"] });
+        assert!(!find("discord_list_members").visible(&only_guilds));
+        assert!(!find("discord_voice_who").visible(&only_guilds));
+        assert!(find("discord_list_members").visible(&json!({ "list": ["members"] })));
+        assert!(find("discord_voice_who").visible(&json!({ "list": ["voices"] })));
+        assert!(find("discord_voice_who").visible(&json!({ "list": ["*"] })));
+        let t = find("discord_list_members");
+        assert_eq!(t.params(&json!({ "guild": "g", "limit": 100000 }))["limit"], 500);
+        assert_eq!(t.params(&json!({ "guild": "g" }))["limit"], 100);
+        assert!(t.params(&json!({ "guild": "g", "token": "x" })).get("token").is_none());
     }
 
     #[test]

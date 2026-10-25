@@ -69,6 +69,25 @@ try {
     Check 'help has no color codes when piped' ($help -notmatch "$ESC")
     $comp = & $ctl completions powershell | Out-String
     Check 'PowerShell completions are generated' ($comp -match 'Register-ArgumentCompleter')
+    Write-Host "== language"
+    $prevEnc = [Console]::OutputEncoding
+    [Console]::OutputEncoding = [Text.Encoding]::UTF8
+    $ru = & $ctl --lang ru --help | Out-String
+    Check 'Russian help with --lang ru' ($ru -match 'Использование' -and $ru -match 'С чего начать' -and $ru -notmatch 'Get started')
+    $env:DISCORDCTL_LANG = 'ru'
+    $viaEnv = & $ctl lang | Out-String
+    Remove-Item Env:DISCORDCTL_LANG
+    Check 'DISCORDCTL_LANG switches the language' ($viaEnv -match 'язык')
+    & $ctl lang ru | Out-Null
+    Check 'lang ru is remembered between runs' ((& $ctl lang | Out-String) -match 'язык: ru')
+    Check 'English still wins with an explicit --lang en' ((& $ctl --lang en --help | Out-String) -match 'Get started')
+    Check '--json output is not translated' ((& $ctl --json lang | ConvertFrom-Json).lang -eq 'ru')
+    & $ctl lang fr 2>&1 | Out-Null
+    Check 'an unknown language is refused' ($LASTEXITCODE -ne 0)
+    & $ctl lang en | Out-Null
+    Check 'back to English' ((& $ctl --help | Out-String) -match 'Get started')
+    [Console]::OutputEncoding = $prevEnc
+
     $bad = & $ctl messag read 2>&1 | Out-String
     Check 'a typo gets a suggestion and a nonzero exit' ($LASTEXITCODE -ne 0 -and $bad -match 'similar|message')
     Check 'new verbs exist' ((& $ctl message --help | Out-String) -match 'react' -and (& $ctl voice --help | Out-String) -match 'unmute')

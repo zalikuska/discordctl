@@ -21,6 +21,7 @@ crossterm = "0.28"
 dialoguer = { version = "0.11", default-features = false }
 discordctl-core.workspace = true
 indicatif = "0.17"
+miniz_oxide = "0.8"
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
 serde_json.workspace = true
 windows-sys.workspace = true

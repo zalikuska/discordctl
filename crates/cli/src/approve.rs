@@ -33,7 +33,7 @@ pub fn ask(question: &str, default_yes: bool) -> Result<bool> {
         terminal,
     };
     require_terminal()?;
-    print!("{} {} ", question, ui::dim(if default_yes { "[Y/n]" } else { "[y/N]" }));
+    print!("{} {} ", crate::i18n::tr(question), ui::dim(if default_yes { "[Y/n]" } else { "[y/N]" }));
     std::io::stdout().flush()?;
     terminal::enable_raw_mode().context("cannot open the console for input")?;
     let read_answer = || -> Result<Option<bool>> {
@@ -66,7 +66,7 @@ pub fn ask(question: &str, default_yes: bool) -> Result<bool> {
     let answer = answer?;
     match answer {
         Some(yes) => {
-            println!("{}", if yes { "yes" } else { "no" });
+            println!("{}", crate::i18n::tr(if yes { "yes" } else { "no" }));
             Ok(yes)
         }
         None => {
@@ -153,7 +153,7 @@ fn canonicalize(pattern: &str, voice: bool) -> Result<(String, String)> {
 /// Возвращает окончательные права или `None`, если человек отказал.
 pub fn review(app: &str, description: Option<&str>, requested: &Permissions) -> Result<Option<Permissions>> {
     require_terminal()?;
-    println!("\n{} asks for access to your Discord account.", style(format!("App \"{app}\"")).bold());
+    ui::say(format!("\n{} asks for access to your Discord account.", style(format!("App \"{app}\"")).bold()));
     if let Some(d) = description {
         println!("{}", ui::dim(format!("It says: {d}")));
     }
@@ -205,10 +205,10 @@ pub fn review(app: &str, description: Option<&str>, requested: &Permissions) -> 
         Some(c) if c.is_empty() => ui::red("nothing — every allowed call runs without asking!"),
         Some(c) => c.join(", "),
     };
-    println!(
+    ui::say(format!(
         "\nBefore each call you will be asked for: {confirm}. Answer those with {}.",
         ui::bold("discordctl app approve")
-    );
+    ));
     if !ask(&ui::bold("Grant exactly this?"), false)? {
         return Ok(None);
     }
@@ -218,7 +218,11 @@ pub fn review(app: &str, description: Option<&str>, requested: &Permissions) -> 
 /// Просмотр набора прав одним вопросом: список строк и общее согласие. Для готовых наборов (preset), где строк много.
 pub fn review_compact(app: &str, description: &str, requested: &Permissions) -> Result<Option<Permissions>> {
     require_terminal()?;
-    println!("\n{} asks for access to your Discord account ({}).", style(format!("App \"{app}\"")).bold(), description);
+    ui::say(format!(
+        "\n{} asks for access to your Discord account ({}).",
+        style(format!("App \"{app}\"")).bold(),
+        description
+    ));
     let line = |label: &str, items: &[String], risky: bool| {
         if !items.is_empty() {
             let tag = if risky { ui::yellow(format!("{label:<6}")) } else { ui::cyan(format!("{label:<6}")) };
@@ -235,6 +239,8 @@ pub fn review_compact(app: &str, description: &str, requested: &Permissions) -> 
     perms.validate().map_err(anyhow::Error::msg)?;
     if perms.write.is_empty() && perms.voice.is_empty() && perms.stream.is_empty() {
         println!("{}", ui::dim("  read-only: nothing can be sent, said or shared"));
+    } else if perms.confirm.as_ref().is_some_and(|c| c.is_empty()) {
+        println!("{}", ui::red("  NO approval: every call runs at once, the agent acts on its own"));
     } else {
         println!(
             "{}",
@@ -251,7 +257,7 @@ pub fn review_compact(app: &str, description: &str, requested: &Permissions) -> 
 /// Бесконечный цикл ответов на запросы приложений. Выход по Ctrl+C.
 pub fn approvals_loop() -> Result<()> {
     require_terminal()?;
-    println!("{} Waiting for apps to ask for approval (Ctrl+C to stop)...", ui::cyan("◉"));
+    ui::say(format!("{} Waiting for apps to ask for approval (Ctrl+C to stop)...", ui::cyan("◉")));
     let mut seen: HashSet<u64> = HashSet::new();
     loop {
         for item in api::pending()? {

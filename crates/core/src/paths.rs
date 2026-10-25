@@ -74,9 +74,13 @@ pub fn log(name: &str, msg: &str) {
     }
 }
 
+/// SHA-256 байтов в hex.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// SHA-256 файла в hex или `None`, если файла нет или он не читается.
 pub fn sha256_file(path: &Path) -> Option<String> {
-    use sha2::{Digest, Sha256};
-    let bytes = std::fs::read(path).ok()?;
-    Some(Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect())
+    Some(sha256_hex(&std::fs::read(path).ok()?))
 }

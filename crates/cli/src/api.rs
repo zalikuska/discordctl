@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::{path::PathBuf, time::Duration};
 
 pub const T: Duration = Duration::from_secs(10);
-/// Чтение истории идёт с паузами между страницами, запись ждёт человека до двух минут.
+/// Чтение истории идёт с паузами между страницами, запись через MCP ждёт человека до 55 секунд.
 pub const LONG: Duration = Duration::from_secs(160);
 
 /// Запрос к уже работающему демону. `None`, если демон не запущен.

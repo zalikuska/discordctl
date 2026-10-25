@@ -9,11 +9,13 @@ const OVERVIEW: &str = "\
 \x1b[1mGet started\x1b[0m
   discordctl setup                       install everything and connect an AI agent
   discordctl doctor                      check the installation and tell what to fix
+  discordctl update                      download and install the newest release
+  discordctl lang ru|en|auto             interface language
 
 \x1b[1mDiscord\x1b[0m
-  discordctl server | channel | chat | friend      list what you have
+  discordctl server | channel | chat | friend      list what you have (server members: who is on a server)
   discordctl message read|send|edit|delete|react   read and write messages (shortcuts: read, send)
-  discordctl voice  join|leave|mute|unmute|deafen|undeafen|status
+  discordctl voice  join|leave|mute|unmute|deafen|undeafen|status|who
   discordctl stream list|start|stop|status
 
 \x1b[1mAI agents\x1b[0m
@@ -49,6 +51,9 @@ pub struct Cli {
     /// Plain output without colors (also honors NO_COLOR)
     #[arg(long, global = true)]
     pub no_color: bool,
+    /// Interface language: en, ru or auto (also DISCORDCTL_LANG; `discordctl lang` saves it)
+    #[arg(long, global = true, value_name = "LANG")]
+    pub lang: Option<String>,
     #[command(subcommand)]
     pub cmd: Cmd,
 }
@@ -71,6 +76,13 @@ pub enum Cmd {
         /// Also delete discordctl data: app tokens, audit log, logs (asks first)
         #[arg(long)]
         purge: bool,
+    },
+    /// Check for a newer release, download it, verify it and install it
+    Update(UpdateArgs),
+    /// Show or change the interface language (en, ru, auto)
+    Lang {
+        /// en, ru or auto (the Windows display language); omit to show the current one
+        value: Option<String>,
     },
     /// Check the installation and say what to fix
     Doctor {
@@ -205,6 +217,24 @@ pub enum Preset {
     ReadOnly,
     /// Read, plus send/edit/delete/react: every write waits for your approval
     Assistant,
+    /// Everything (write, voice, screen sharing) with NO approval prompts: use only for an agent you fully trust
+    Autonomous,
+}
+
+#[derive(Args)]
+pub struct UpdateArgs {
+    /// Only say whether a newer release exists
+    #[arg(long)]
+    pub check: bool,
+    /// Download and verify, but do not install: unpack into the data folder and print where
+    #[arg(long)]
+    pub no_install: bool,
+    /// Take this release (for example v0.1.1) instead of the latest one; older ones are allowed
+    #[arg(long, value_name = "TAG")]
+    pub release: Option<String>,
+    /// Do not ask (closes a running Discord if the update needs it)
+    #[arg(short, long)]
+    pub yes: bool,
 }
 
 #[derive(Args)]
@@ -233,6 +263,17 @@ pub struct SetupArgs {
 pub enum ServerCmd {
     /// List your servers
     List,
+    /// Members of a server that Discord has loaded (large servers load gradually)
+    Members {
+        /// Server name or id
+        server: String,
+        /// Only members whose name, username or nickname contains this
+        #[arg(short, long)]
+        filter: Option<String>,
+        /// How many to show (max 500)
+        #[arg(short = 'n', long, default_value_t = 100)]
+        limit: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -344,6 +385,14 @@ pub enum MessageCmd {
 pub enum VoiceCmd {
     /// Which voice channel you are in and who is there
     Status,
+    /// Who is in a voice channel, or in all voice channels of a server
+    Who {
+        /// Voice channel: Server/channel or an id; @name for a call in a chat
+        target: Option<String>,
+        /// Show every voice channel of this server that has people in it
+        #[arg(long, conflicts_with = "target")]
+        server: Option<String>,
+    },
     /// Join a voice channel (a call in a chat only if one is already running)
     Join {
         /// Voice channel: Server/channel or an id; @name for a running call in a chat
@@ -419,7 +468,7 @@ pub struct AppAddArgs {
     /// Read the rights from a TOML manifest (see examples/agent.toml)
     #[arg(long, conflicts_with_all = ["list", "read", "write", "voice", "voice_channel", "stream"])]
     pub manifest: Option<PathBuf>,
-    /// Lists it may see: servers, channels, chats, friends, me, or *
+    /// Lists it may see: servers, channels, chats, friends, me, members, voices, or *
     #[arg(long, value_name = "WHAT")]
     pub list: Vec<String>,
     /// Chats it may read: @name, Server/channel, Server/*, @*, or *

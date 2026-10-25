@@ -54,8 +54,12 @@ discordctl chat                           # your direct chats and groups
 discordctl read @alice -n 20              # last 20 messages
 discordctl send @alice "hello" --dry-run  # preview; drop --dry-run to send
 discordctl voice join "My Server/Lounge"  # join a voice channel
+discordctl voice who --server "My Server"  # who is in which voice channel
+discordctl server members "My Server" -f ann  # members the client has loaded
 discordctl stream list                    # windows you could share
 discordctl doctor                         # is everything healthy?
+discordctl update                         # download, verify and install the newest release (--check: just look)
+discordctl lang ru                        # Russian interface (en, ru, auto; also --lang or DISCORDCTL_LANG; Ctrl+L in the wizard)
 ```
 
 ### Targets: one syntax everywhere
@@ -70,10 +74,10 @@ discordctl doctor                         # is everything healthy?
 ## Commands
 
 ```text
-setup | install | uninstall | doctor | status | start         lifecycle
+setup | install | update | uninstall | doctor | status | start  lifecycle
 server | channel list <server> | chat | friend                  what you have
 message read|send|edit|delete|react <target> …                  (shortcuts: read, send)
-voice status|join|leave|mute|unmute|deafen|undeafen
+voice status|who|join|leave|mute|unmute|deafen|undeafen
 stream list|status|start|stop
 app add|list|remove|log|approve|whoami                          rights of apps and agents
 mcp install|status|remove                                       connect AI agents
@@ -90,7 +94,9 @@ discordctl mcp install                    # pick agents and a preset; asks you t
 discordctl app approve                    # keep open in another window: writes wait here for your OK
 ```
 
-Presets: **read-only** (list and read) and **assistant** (also send/edit/delete/react, each one approved by you).
+Presets: **read-only** (list and read), **assistant** (also send/edit/delete/react, each one approved by you) and
+**autonomous** (everything, including voice and screen sharing, with no approval at all: only for an agent you fully
+trust; `discordctl mcp install --preset autonomous`, or pick it in the setup wizard).
 Voice and window sharing are granted explicitly with `discordctl app add`.
 
 - The agent gets a **token with only the rights you approved**; revoke it at once with `discordctl mcp remove` or

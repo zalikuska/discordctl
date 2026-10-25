@@ -115,14 +115,60 @@ function pick<T extends { id: string }>(items: T[], query: string, tiers: Names<
   throw new Error(`${what} "${query}" not found`);
 }
 
-function resolveGuild(query: string): Raw {
+export function resolveGuild(query: string): Raw {
   const list: Raw[] = Object.values(call("GuildStore", "getGuilds"));
   return pick<Raw & { id: string }>(list.map((g) => ({ ...g, id: String(g.id) })), query, [(g) => [g.name]], "guild");
 }
 
-function guildChannels(guildId: string): Raw[] {
+export function guildChannels(guildId: string): Raw[] {
   const map = call("ChannelStore", "getMutableGuildChannelsForGuild", guildId) as Record<string, Raw>;
   return Object.values(map).sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+}
+
+const MEMBERS_DEFAULT = 100;
+const MEMBERS_MAX = 500;
+
+/**
+ * Участники сервера, которые клиент уже загрузил. Discord не отдаёт весь список большого сервера сразу: он подгружается
+ * по мере просмотра списка участников и событий, поэтому `loaded` может быть меньше `total_members`.
+ */
+export function members(p: { guild: string; query?: string; limit?: number }) {
+  const g = resolveGuild(p.guild);
+  const gid = String(g.id);
+  const raw = (call("GuildMemberStore", "getMembers", gid) ?? []) as Raw[];
+  let total: number | null = null;
+  try {
+    const n = call("GuildMemberCountStore", "getMemberCount", gid);
+    total = typeof n === "number" ? n : null;
+  } catch {
+    // счётчика может не быть: это только подсказка
+  }
+  let roleNames: Record<string, string> = {};
+  try {
+    const roles = (call("GuildStore", "getRoles", gid) ?? {}) as Record<string, Raw>;
+    roleNames = Object.fromEntries(Object.entries(roles).map(([id, r]) => [id, String(r.name ?? id)]));
+  } catch {
+    // без названий ролей остаются их id
+  }
+  const q = norm(p.query ?? "");
+  const all = raw
+    .map((m) => {
+      const u = call("UserStore", "getUser", m.userId) as Raw | undefined;
+      const brief = userBrief(u) ?? { id: String(m.userId), username: null, display_name: null, bot: false };
+      const roles = ((m.roles as string[] | undefined) ?? []).map((id) => roleNames[id] ?? id);
+      return { ...brief, nickname: m.nick ?? null, roles: roles.slice(0, 10), joined_at: m.joinedAt ?? null };
+    })
+    .filter((m) => !q || [m.display_name, m.username, m.nickname].some((n) => n && norm(String(n)).includes(q)))
+    .sort((a, b) => String(a.nickname ?? a.display_name).localeCompare(String(b.nickname ?? b.display_name)));
+  const limit = Math.min(Math.max(1, Math.floor(p.limit ?? MEMBERS_DEFAULT) || MEMBERS_DEFAULT), MEMBERS_MAX);
+  return {
+    guild: { id: gid, name: String(g.name) },
+    loaded: raw.length,
+    total_members: total,
+    matched: all.length,
+    truncated: all.length > limit,
+    members: all.slice(0, limit),
+  };
 }
 
 export function channels(guildQuery: string) {

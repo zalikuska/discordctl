@@ -21,7 +21,8 @@ What is **not** protected (also described in [docs/ARCHITECTURE.md](docs/ARCHITE
    the boundary matters.
 2. The terminal approval dialogs refuse piped input but cannot tell a human from an agent with a pseudo-terminal.
 3. Owner-level requests on the daemon pipe (`dev call`, `dev reload`, `start`) are open to any process of your user.
-4. Binaries are unsigned. Verify the SHA-256 of release archives (`SHA256SUMS.txt`) or build from source.
+4. Binaries are unsigned. Verify the SHA-256 of release archives (`SHA256SUMS.txt`) or build from source. `discordctl update` does the same check
+   (the sum comes from the same GitHub release, so it catches a damaged or altered download, not a replaced release).
 
 ## Reporting a vulnerability
 

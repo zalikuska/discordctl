@@ -6,7 +6,7 @@
 # Nothing is installed silently. Optional environment variables:
 #   DISCORDCTL_REPO     owner/name of the repository (default below)
 #   DISCORDCTL_VERSION  a tag such as v0.1.0 (default: latest)
-#   DISCORDCTL_ARGS     extra arguments for `discordctl setup`, e.g. "--yes --agent claude-code --preset read-only"
+#   DISCORDCTL_ARGS     extra arguments for `discordctl setup`, e.g. "--yes --agent claude-code --preset read-only" or "--lang ru"
 #
 # If the Discord desktop app is missing, the script offers to download the official installer from discord.com,
 # checks that it is signed by Discord Inc. and runs it.

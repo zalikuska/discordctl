@@ -1,7 +1,7 @@
 // Голос: состояние, вход и выход, mute и deafen. Звук никуда не передаётся и не читается: только управление клиентом.
 // Вход в личный звонок без активного разговора звонит людям, поэтому требует явного `ring`.
 
-import { describeChannel, resolveChannel, userBrief, userName } from "./directory";
+import { describeChannel, guildChannels, resolveChannel, resolveGuild, userBrief, userName } from "./directory";
 import { requireFns } from "./modules";
 import { getStore } from "./stores";
 
@@ -47,6 +47,31 @@ function participants(channelId: string) {
       video: !!v.selfVideo,
     };
   });
+}
+
+/**
+ * Кто сейчас в голосе. С `channel`: участники этого канала (голосового, трибуны или звонка в чате). С `guild`: все голосовые
+ * каналы сервера, в которых кто-то есть. Данные берутся из состояния клиента, ничего не запрашивается и не меняется.
+ */
+export function voiceWho(p: { channel?: string; guild?: string }) {
+  if (p.channel) {
+    const ch = resolveChannel(p.channel, { voice: true });
+    const info = describeChannel(ch);
+    if (!VOICE_KINDS.has(ch.type)) throw new Error(`${info.kind} "${info.name}" is not a voice channel`);
+    return { channel: info, participants: participants(String(ch.id)) };
+  }
+  if (!p.guild) throw new Error("give a voice channel (Server/channel) or a server name");
+  const g = resolveGuild(p.guild);
+  const voice = guildChannels(String(g.id)).filter((c) => c.type === 2 || c.type === 13);
+  const occupied = voice
+    .map((c) => ({ channel: describeChannel(c), participants: participants(String(c.id)) }))
+    .filter((c) => c.participants.length > 0);
+  return {
+    guild: { id: String(g.id), name: String(g.name) },
+    voice_channels: voice.length,
+    people_in_voice: occupied.reduce((n, c) => n + c.participants.length, 0),
+    channels: occupied,
+  };
 }
 
 export function voiceStatus() {

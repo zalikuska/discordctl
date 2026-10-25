@@ -1,10 +1,13 @@
 //! Мастер установки на весь экран: проверка, параметры, установка, подключение Discord, агенты, итог.
 
-use super::{bold, dim, fg, first_upper, height_of, panel, text, Choice, Flow, Item, Tui, ACCENT, BAD, DIM, OK, WARN};
+use super::{
+    bold, dim, fg, first_upper, height_of, panel, text, tr_lines, Choice, Flow, Item, Tui, ACCENT, BAD, DIM, OK, WARN,
+};
 use crate::{
     api::{ask, owner_call, stop_daemon},
     cli::{AgentKind, Preset, SetupArgs},
     doctor::{self, Level},
+    i18n::{self, tr},
     mcp, ops, winsys,
 };
 use anyhow::{anyhow, bail, Result};
@@ -104,7 +107,7 @@ fn buttons(labels: &[&str], focus: usize) -> Line<'static> {
         } else {
             Style::new().fg(Color::Rgb(200, 205, 225)).bg(Color::Rgb(50, 54, 80))
         };
-        spans.push(Span::styled(format!("  {l}  "), style));
+        spans.push(Span::styled(format!("  {}  ", tr(l)), style));
     }
     Line::from(spans)
 }
@@ -165,9 +168,9 @@ fn bullet(s: impl Into<String>) -> Line<'static> {
 }
 
 fn error_screen(tui: &mut Tui, step: usize, title: &str, e: &anyhow::Error, hint: &str) -> Result<()> {
-    let mut lines = vec![Line::from(Span::styled(format!("× {e}"), bold(BAD)))];
+    let mut lines = vec![Line::from(Span::styled(format!("× {}", tr(&e.to_string())), bold(BAD)))];
     for cause in e.chain().skip(1) {
-        lines.push(Line::from(Span::styled(format!("   caused by: {cause}"), dim())));
+        lines.push(Line::from(Span::styled(format!("   caused by: {}", tr(&cause.to_string())), dim())));
     }
     lines.push(plain(""));
     lines.push(Line::from(Span::styled(hint.to_owned(), dim())));
@@ -246,7 +249,7 @@ fn rows_to_lines(rows: &[Row]) -> Vec<Line<'static>> {
         .map(|r| {
             Line::from(vec![
                 Span::styled(format!("{} ", r.mark), bold(r.color)),
-                Span::styled(format!("{:<15}", r.label), bold(Color::White)),
+                Span::styled(i18n::pad(&tr(r.label), i18n::col(15)), bold(Color::White)),
                 Span::raw(r.detail.clone()),
             ])
         })
@@ -256,8 +259,8 @@ fn rows_to_lines(rows: &[Row]) -> Vec<Line<'static>> {
 const TOS: &str = "discordctl drives your own user account through the desktop client. Discord's Terms of Service forbid that and an account can be banned. Reads and writes are rate-limited and nothing pings anyone by default, but there is no guarantee. Use it at your own risk; this project is not affiliated with Discord.";
 
 fn welcome_body(f: &mut Frame, area: Rect, facts: &Facts, root: &Path, focus: usize, labels: &[&str]) {
-    let rows = rows_to_lines(&check_rows(facts, root));
-    let tos = vec![Line::from(Span::raw(TOS))];
+    let rows = tr_lines(rows_to_lines(&check_rows(facts, root)));
+    let tos = tr_lines(vec![Line::from(Span::raw(TOS))]);
     let rows_h = height_of(&rows, area.width.saturating_sub(4)) + 2;
     let tos_h = height_of(&tos, area.width.saturating_sub(4)) + 2;
     let [a, b, _, c] = Layout::vertical([
@@ -570,6 +573,12 @@ fn pick_preset(tui: &mut Tui) -> Result<Preset> {
             "read, plus send / edit / delete / react; every write still waits for your approval",
             false,
         ),
+        Item::radio(
+            "Autonomous",
+            "everything incl. voice and screen sharing, with NO approval: only for an agent you fully trust",
+            false,
+        )
+        .tag("risky", BAD),
         Item::action("Continue", ""),
     ]);
     tui.run(
@@ -584,7 +593,13 @@ fn pick_preset(tui: &mut Tui) -> Result<Preset> {
             }
             if k.code == KeyCode::Enter {
                 if choice.on_action() {
-                    return Flow::Done(if choice.items[1].on { Preset::Assistant } else { Preset::ReadOnly });
+                    return Flow::Done(if choice.items[2].on {
+                        Preset::Autonomous
+                    } else if choice.items[1].on {
+                        Preset::Assistant
+                    } else {
+                        Preset::ReadOnly
+                    });
                 }
                 choice.toggle();
             }
@@ -616,7 +631,8 @@ fn rights_lines(p: &Permissions) -> Vec<Line<'static>> {
 
 fn review(tui: &mut Tui, agents: &[AgentKind], preset: Preset, perms: &Permissions) -> Result<bool> {
     let names = agents.iter().map(|a| a.title()).collect::<Vec<_>>().join(", ");
-    let writes = preset == Preset::Assistant;
+    let writes = preset != Preset::ReadOnly;
+    let autonomous = preset == Preset::Autonomous;
     let mut lines = vec![
         Line::from(vec![
             Span::styled(names, bold(Color::White)),
@@ -628,12 +644,20 @@ fn review(tui: &mut Tui, agents: &[AgentKind], preset: Preset, perms: &Permissio
     lines.push(plain(""));
     lines.push(Line::from(Span::styled("`*` means every chat and server you can see now and in the future.", dim())));
     lines.push(Line::from(Span::styled(
-        if writes {
+        if autonomous {
+            "NO approval: the agent can send, edit, delete, join calls and share your screen on its own."
+        } else if writes {
             "Every write waits for your OK: keep `discordctl app approve` open in another window."
         } else {
             "Read-only: nothing can be sent, said or shared.  Revoke any time: `discordctl mcp remove`."
         },
-        if writes { fg(WARN) } else { dim() },
+        if autonomous {
+            bold(BAD)
+        } else if writes {
+            fg(WARN)
+        } else {
+            dim()
+        },
     )));
     let pick =
         ask_buttons(tui, 4, "Approve these rights", lines, &["Allow", "Don't allow"], if writes { 1 } else { 0 }, 1)?;
@@ -712,11 +736,11 @@ fn done_lines(
         };
         out.push(Line::from(vec![
             Span::styled(format!("{mark} "), bold(color)),
-            Span::styled(format!("{:<22}", c.name), bold(Color::White)),
-            Span::raw(c.detail.clone()),
+            Span::styled(i18n::pad(&tr(c.name), i18n::col(22)), bold(Color::White)),
+            Span::raw(tr(&c.detail).into_owned()),
         ]));
         if let (true, Some(h)) = (c.level >= Level::Warn, &c.hint) {
-            out.push(Line::from(Span::styled(format!("    → {h}"), dim())));
+            out.push(Line::from(Span::styled(format!("    → {}", tr(h)), dim())));
         }
     }
     if !agents.is_empty() {
@@ -771,7 +795,7 @@ fn done(tui: &mut Tui, attached: bool, agents: &Connected, snippets: &[String]) 
         &[("↑↓", "scroll"), ("Enter", "finish")],
         |f, area, scroll, _| {
             let max = total.saturating_sub(area.height);
-            f.render_widget(Paragraph::new(lines.clone()).scroll(((*scroll).min(max), 0)), area);
+            f.render_widget(Paragraph::new(tr_lines(lines.clone())).scroll(((*scroll).min(max), 0)), area);
         },
         |scroll, k| {
             match k.code {
@@ -907,6 +931,125 @@ mod more_tests {
         println!("{s}");
         assert!(s.contains("Installed, with a note") && s.contains("Claude Code") && s.contains("discordctl chat"));
         assert!(s.contains("× Cursor") && s.contains("cannot write the config"));
+    }
+
+    #[test]
+    fn russian_screens_are_translated_and_keep_their_layout() {
+        crate::i18n::set(crate::i18n::Lang::Ru);
+        let mut t = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let root = PathBuf::from(r"C:\Users\x\AppData\Local\Discord");
+        let facts = Facts {
+            app_dir: Some(PathBuf::from(r"C:\Users\x\AppData\Local\Discord\app-1.0.9265")),
+            installed: false,
+            running: true,
+            managed: false,
+            kaspersky: true,
+            others: vec![],
+            on_path: false,
+        };
+        t.draw(|f| {
+            let area = super::super::shell(f, 0, "Welcome — let's check your system", &[("Enter", "confirm")]);
+            welcome_body(f, area, &facts, &root, 0, &["Continue", "Quit"]);
+        })
+        .unwrap();
+        let s = dump(&t);
+        println!("{s}");
+        for ru in
+            ["Проверка", "Ваша система", "Прочитайте сначала", "Продолжить", "Выйти", "подтвердить", "Ctrl+L English"]
+        {
+            assert!(s.contains(ru), "missing {ru:?}");
+        }
+        assert!(!s.contains("Your system") && !s.contains("Read this first"), "English is left on the Russian screen");
+
+        let mut c = Choice::new(vec![
+            Item::toggle(
+                "Add discordctl to PATH",
+                "so `discordctl` works from any terminal window (open a new one afterwards)",
+                true,
+            ),
+            Item::toggle(
+                "Restart Discord now",
+                "needed so discordctl can attach to it; a running call will be interrupted",
+                true,
+            )
+            .locked(),
+            Item::action("Install", ""),
+        ]);
+        c.down();
+        t.draw(|f| {
+            let area = super::super::shell(f, 1, "Choose what to install", &[("Space", "toggle")]);
+            text(f, area, c.lines());
+        })
+        .unwrap();
+        let s = dump(&t);
+        println!("{s}");
+        assert!(s.contains("[√] Добавить discordctl в PATH") && s.contains("(обязательно)") && s.contains("Пробел"));
+        crate::i18n::set(crate::i18n::Lang::En);
+    }
+
+    #[test]
+    fn russian_result_and_rights_screens() {
+        crate::i18n::set(crate::i18n::Lang::Ru);
+        let checks = vec![
+            doctor::Check { name: "Discord install", level: Level::Ok, detail: "app-1.0.9265".into(), hint: None },
+            doctor::Check {
+                name: "client compatibility",
+                level: Level::Warn,
+                detail: "self-check failed: boom".into(),
+                hint: Some("Wait for Discord to finish loading and run doctor again.".into()),
+            },
+        ];
+        let agents: Connected = vec![
+            (AgentKind::ClaudeCode, Ok("registered with `claude mcp add` (user scope)".into())),
+            (AgentKind::Cursor, Err(anyhow!("`claude mcp add` failed: no"))),
+        ];
+        let (lines, _) = done_lines(&checks, false, &agents, &[]);
+        let mut t = Terminal::new(TestBackend::new(110, 32)).unwrap();
+        t.draw(|f| {
+            let area = super::super::shell(f, 5, "Done", &[("↑↓", "scroll"), ("Enter", "finish")]);
+            f.render_widget(Paragraph::new(super::super::tr_lines(lines.clone())), area);
+        })
+        .unwrap();
+        let s = dump(&t);
+        println!("{s}");
+        for ru in [
+            "Установлено, есть замечание",
+            "установка Discord",
+            "совместимость с клиентом",
+            "самопроверка не удалась: boom",
+            "Дождитесь, пока Discord загрузится",
+            "ИИ-агенты",
+            "зарегистрировано через `claude mcp add`",
+            "`claude mcp add` не удалась: no",
+            "Перезапустите агента",
+            "Попробуйте",
+            "проверить установку в любой момент",
+            "прокрутка",
+            "завершить",
+        ] {
+            assert!(s.contains(ru), "missing {ru:?}");
+        }
+
+        let perms = mcp::preset_permissions(Preset::Autonomous);
+        let mut lines = vec![
+            Line::from(Span::raw("Claude Code")),
+            Line::from(Span::raw(" will get access to your Discord account:")),
+        ];
+        lines.extend(rights_lines(&perms));
+        lines.push(Line::from(Span::styled(
+            "NO approval: the agent can send, edit, delete, join calls and share your screen on its own.",
+            dim(),
+        )));
+        t.draw(|f| {
+            let area = super::super::shell(f, 4, "Approve these rights", &[("←→", "choose")]);
+            f.render_widget(Paragraph::new(super::super::tr_lines(lines.clone())), area);
+        })
+        .unwrap();
+        let s = dump(&t);
+        println!("{s}");
+        assert!(s.contains("Одобрить эти права") && s.contains("получит доступ к вашему аккаунту Discord:"));
+        assert!(s.contains("БЕЗ одобрения: агент сам сможет"));
+        crate::i18n::set(crate::i18n::Lang::En);
     }
 
     #[test]

@@ -186,23 +186,85 @@ pub fn voice(v: &Value) {
         }
         None => ui::info(format!("not in a voice channel {}", ui::dim(format!("({})", s(v, "state"))))),
     }
-    println!(
+    ui::say(format!(
         "  microphone {}   sound {}",
         if v["self_mute"] == true { ui::red("muted") } else { ui::green("on") },
         if v["self_deaf"] == true { ui::red("off") } else { ui::green("on") }
-    );
-    for p in rows_of(&v["participants"]) {
-        let mut flags = Vec::new();
+    ));
+    people(&v["participants"], "  ");
+}
+
+/// Участники голосового канала: имя и пометки (микрофон, звук, трансляция, видео).
+fn people(list: &Value, indent: &str) {
+    for p in rows_of(list) {
+        let mut flags: Vec<String> = Vec::new();
         for (key, word) in
             [("muted", "muted"), ("deafened", "deafened"), ("streaming", "streaming"), ("video", "video")]
         {
             if p[key] == true {
-                flags.push(word);
+                flags.push(crate::i18n::tr(word).into_owned());
             }
         }
         let tail = if flags.is_empty() { String::new() } else { ui::dim(format!(" [{}]", flags.join(", "))) };
-        println!("  {} {}{}", ui::cyan("●"), p["user"]["display_name"].as_str().unwrap_or("?"), tail);
+        println!("{indent}{} {}{}", ui::cyan("●"), p["user"]["display_name"].as_str().unwrap_or("?"), tail);
     }
+}
+
+/// Кто в голосовых каналах: один канал или все занятые каналы сервера.
+pub fn voice_who(v: &Value) {
+    if let Some(ch) = v["channel"].as_object().map(|_| &v["channel"]) {
+        let n = rows_of(&v["participants"]).count();
+        ui::info(format!("{} {}", style(s(ch, "name")).bold(), ui::dim(format!("({}, {n} here)", s(ch, "kind")))));
+        if n == 0 {
+            return ui::hint("nobody is there");
+        }
+        return people(&v["participants"], "  ");
+    }
+    let total = v["people_in_voice"].as_u64().unwrap_or(0);
+    ui::info(format!(
+        "{}: {total} in voice, {} voice channels",
+        style(s(&v["guild"], "name")).bold(),
+        v["voice_channels"].as_u64().unwrap_or(0)
+    ));
+    if total == 0 {
+        return ui::hint("nobody is in a voice channel");
+    }
+    for c in rows_of(&v["channels"]) {
+        println!("\n{}", style(s(&c["channel"], "name")).bold());
+        people(&c["participants"], "  ");
+    }
+}
+
+/// Участники сервера, которых клиент уже загрузил.
+pub fn members(v: &Value) {
+    let rows: Vec<Vec<String>> = rows_of(&v["members"])
+        .map(|m| {
+            let name = m["display_name"].as_str().unwrap_or("?");
+            let nick = m["nickname"].as_str().filter(|n| *n != name).map(|n| format!(" ({n})")).unwrap_or_default();
+            let roles =
+                m["roles"].as_array().map(|r| r.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "));
+            vec![
+                ui::bold(format!("{name}{nick}")),
+                if m["bot"] == true { ui::yellow("bot") } else { String::new() },
+                ui::dim(s(m, "username")),
+                roles.unwrap_or_default(),
+            ]
+        })
+        .collect();
+    if rows.is_empty() {
+        return ui::info("no loaded members match");
+    }
+    println!("{}", ui::table(&["MEMBER", "", "USERNAME", "ROLES"], &rows));
+    let loaded = v["loaded"].as_u64().unwrap_or(0);
+    let total = v["total_members"].as_u64();
+    let mut note = format!("{} of {loaded} loaded members", rows.len());
+    if let Some(t) = total {
+        note.push_str(&format!(" (the server has {t})"));
+    }
+    if v["truncated"] == true {
+        note.push_str(": more match, raise -n or narrow the filter");
+    }
+    ui::hint(note);
 }
 
 pub fn stream_sources(v: &Value) {

@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Permissions {
-    /// Списки: `guilds`, `channels`, `dms`, `friends`, `me` или `*`.
+    /// Списки: `guilds`, `channels`, `dms`, `friends`, `me`, `members` (участники сервера), `voices` (кто в голосовых
+    /// каналах) или `*`.
     #[serde(default)]
     pub list: Vec<String>,
     /// Чтение истории: шаблоны ресурсов.
@@ -167,7 +168,7 @@ impl Permissions {
     /// Проверка формы: неизвестные слова и шаблоны — ошибка, чтобы опечатка не превратилась в молчаливый отказ или, хуже, в лишнее право.
     pub fn validate(&self) -> Result<(), String> {
         for w in &self.list {
-            if !["*", "guilds", "channels", "dms", "friends", "me"].contains(&w.as_str()) {
+            if !["*", "guilds", "channels", "dms", "friends", "me", "members", "voices"].contains(&w.as_str()) {
                 return Err(format!("list: unknown item {w:?}"));
             }
         }

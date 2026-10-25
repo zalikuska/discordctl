@@ -19,8 +19,9 @@ use std::{
 };
 use windows_sys::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
 
-/// Сколько вызов ждёт решения человека, потом отказ.
-const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
+/// Сколько вызов ждёт решения человека, потом отказ. Меньше минуты: клиенты агентов (Cursor и другие) обрывают вызов
+/// по своему таймауту около 60 секунд, и агент увидел бы безликое «timeout», а не причину.
+const APPROVAL_TIMEOUT: Duration = Duration::from_secs(55);
 /// Как часто во время ожидания проверяем, что приложение ещё на связи.
 const GONE_CHECK: Duration = Duration::from_millis(400);
 /// Сколько вызовов одного приложения может ждать человека одновременно: больше уже спам.
@@ -231,7 +232,7 @@ fn ask_human(app: &str, summary: String, gone: &dyn Fn() -> bool) -> Result<(), 
         Some(true) if gone() => Err("the app cancelled the call or disconnected"),
         Some(true) => Ok(()),
         Some(false) => Err("rejected by the user"),
-        None => Err("no answer from the user in time"),
+        None => Err("no answer from the user in time (the owner answers with `discordctl app approve`)"),
     }
 }
 
@@ -259,6 +260,8 @@ fn need(method: &str) -> Option<Need> {
         "channels" => Need::Word("list", "channels"),
         "dms" => Need::Word("list", "dms"),
         "friends" => Need::Word("list", "friends"),
+        "members" => Need::Word("list", "members"),
+        "voice_who" => Need::Word("list", "voices"),
         "stream_sources" => Need::Word("stream", "list"),
         "stream_status" => Need::Word("stream", "status"),
         "stream_stop" => Need::Word("stream", "stop"),
@@ -314,6 +317,8 @@ fn human_summary(app: &str, method: &str, place: &str, params: &Value) -> String
 fn allowed_params(method: &str) -> &'static [&'static str] {
     match method {
         "channels" => &["guild"],
+        "members" => &["guild", "query", "limit"],
+        "voice_who" => &["channel", "guild"],
         "messages" => &["channel", "limit", "before", "after"],
         "send" => &["channel", "content", "reply_to", "dry_run"],
         "edit" => &["channel", "message", "content", "dry_run"],
@@ -347,8 +352,14 @@ fn sanitize(method: &str, params: &Value) -> Result<Value, String> {
             out.insert((*key).to_owned(), v.clone());
         }
     }
-    if method == "messages" {
-        let limit = out.get("limit").and_then(Value::as_u64).unwrap_or(50).clamp(1, 200);
+    // Размер выдачи ограничен и здесь: приложение может говорить с демоном напрямую, минуя MCP-сервер.
+    let page = match method {
+        "messages" => Some((50, 200)),
+        "members" => Some((100, 500)),
+        _ => None,
+    };
+    if let Some((default, max)) = page {
+        let limit = out.get("limit").and_then(Value::as_u64).unwrap_or(default).clamp(1, max);
         out.insert("limit".into(), json!(limit));
     }
     Ok(Value::Object(out))
@@ -488,6 +499,23 @@ mod tests {
         assert_eq!(react["remove"], true);
         assert!(react.get("other").is_none());
         assert_eq!(s("me", json!({ "anything": 1 })), json!({}));
+    }
+
+    #[test]
+    fn member_lists_need_their_own_words_and_are_capped() {
+        assert!(matches!(need("members"), Some(Need::Word("list", "members"))));
+        assert!(matches!(need("voice_who"), Some(Need::Word("list", "voices"))));
+        let s = |m: &str, p: Value| sanitize(m, &p).unwrap();
+        assert_eq!(
+            s("members", json!({ "guild": "g", "limit": 99999, "x": 1 })),
+            json!({ "guild": "g", "limit": 500 })
+        );
+        assert_eq!(s("members", json!({ "guild": "g" }))["limit"], 100);
+        assert_eq!(
+            s("voice_who", json!({ "channel": "a/b", "guild": "g", "limit": 5 })),
+            json!({ "channel": "a/b", "guild": "g" })
+        );
+        assert!(sanitize("members", &json!({ "guild": 5 })).is_err());
     }
 
     #[test]

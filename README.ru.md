@@ -54,8 +54,12 @@ discordctl chat                           # личные чаты и групп�
 discordctl read @alice -n 20              # последние 20 сообщений
 discordctl send @alice "привет" --dry-run # предпросмотр; уберите --dry-run, чтобы отправить
 discordctl voice join "Мой сервер/Общий"  # войти в голосовой канал
+discordctl voice who --server "Мой сервер"  # кто в каких голосовых каналах
+discordctl server members "Мой сервер" -f аня  # участники, которых клиент уже загрузил
 discordctl stream list                    # окна, которые можно транслировать
 discordctl doctor                         # всё ли в порядке?
+discordctl update                         # скачать, проверить и поставить свежий релиз (--check: только посмотреть)
+discordctl lang ru                        # русский интерфейс (en, ru, auto; ещё --lang или DISCORDCTL_LANG; Ctrl+L в мастере)
 ```
 
 ### Цель команды: один синтаксис везде
@@ -70,10 +74,10 @@ discordctl doctor                         # всё ли в порядке?
 ## Команды
 
 ```text
-setup | install | uninstall | doctor | status | start         жизненный цикл
+setup | install | update | uninstall | doctor | status | start  жизненный цикл
 server | channel list <сервер> | chat | friend                  что у вас есть
 message read|send|edit|delete|react <цель> …                    (короткие формы: read, send)
-voice status|join|leave|mute|unmute|deafen|undeafen
+voice status|who|join|leave|mute|unmute|deafen|undeafen
 stream list|status|start|stop
 app add|list|remove|log|approve|whoami                          права приложений и агентов
 mcp install|status|remove                                       подключение ИИ-агентов
@@ -90,7 +94,9 @@ discordctl app approve     # держите открытым в другом о�
 ```
 
 Наборы: **read-only** (списки и чтение) и **assistant** (плюс отправка, правка, удаление, реакции, каждое действие вы
-одобряете). Голос и трансляцию окна выдают явно через `discordctl app add`.
+одобряете) и **autonomous** (всё, включая голос и показ экрана, вообще без одобрений: только для агента, которому вы
+полностью доверяете; `discordctl mcp install --preset autonomous` или пункт в мастере). Голос и трансляцию окна без
+этого набора выдают явно через `discordctl app add`.
 
 - Агент получает **токен только с одобренными правами**; отзыв мгновенный: `discordctl mcp remove` или
   `discordctl app remove <имя>`.

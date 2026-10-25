@@ -22,15 +22,25 @@ pub fn mcp_exe() -> PathBuf {
     paths::bin_dir().join("discordctl-mcp.exe")
 }
 
-/// Какие права выдаёт набор. Подтверждение каждой записи остаётся включённым по умолчанию.
+/// Какие права выдаёт набор. Подтверждение каждой записи включено, кроме набора `Autonomous`: он отключает их все.
 pub fn preset_permissions(p: Preset) -> Permissions {
     let mut perms = Permissions {
-        list: ["servers", "channels", "chats", "friends", "me"].iter().map(|s| s.to_string()).collect(),
+        list: ["servers", "channels", "chats", "friends", "me", "members", "voices"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
         read: vec!["*".into()],
         ..Default::default()
     };
-    if p == Preset::Assistant {
+    if p != Preset::ReadOnly {
         perms.write = vec!["*".into()];
+    }
+    if p == Preset::Autonomous {
+        // Всё, что умеет MCP-сервер, и без вопросов к человеку. Лимит записи в минуту в payload остаётся.
+        perms.voice = vec!["*".into()];
+        perms.voice_channels = vec!["*".into()];
+        perms.stream = vec!["*".into()];
+        perms.confirm = Some(vec![]);
     }
     perms.normalize();
     perms
@@ -253,12 +263,12 @@ fn register(a: AgentKind, token: &str) -> Result<String> {
             Ok(format!("added to {}", path.display()))
         }
         AgentKind::Print => {
-            println!("\nPaste this into the agent's MCP settings:\n");
+            ui::say("\nPaste this into the agent's MCP settings:\n");
             println!("{}", serde_json::to_string_pretty(&json!({ "mcpServers": { SERVER: server_entry(token) } }))?);
-            println!(
+            ui::say(format!(
                 "\nor, for Claude Code:\n  claude mcp add {SERVER} -s user -e DISCORDCTL_TOKEN={token} -- \"{}\"",
                 mcp_exe().display()
-            );
+            ));
             Ok("printed above".into())
         }
     }
@@ -350,6 +360,12 @@ pub fn install(mut agents: Vec<AgentKind>, preset: Preset, json_mode: bool) -> R
             ui::info(format!(
                 "Writes wait for you: keep {} open in another window.",
                 ui::bold("discordctl app approve")
+            ));
+        }
+        if preset == Preset::Autonomous {
+            ui::warn(format!(
+                "Autonomous: the agent acts without asking you. Take it away any time: {}",
+                ui::bold("discordctl mcp remove")
             ));
         }
     }
@@ -514,5 +530,24 @@ mod store_tests {
         std::fs::create_dir_all(&pkg).unwrap();
         assert_eq!(claude_desktop_dirs_in(&local, &roaming).first(), Some(&pkg));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Набор `Autonomous` даёт все права и отключает подтверждения; остальные наборы подтверждения оставляют.
+    #[test]
+    fn autonomous_preset_turns_every_approval_off_and_the_others_do_not() {
+        let auto = preset_permissions(Preset::Autonomous);
+        assert!(auto.validate().is_ok(), "the rights must be a valid combination");
+        for scope in ["write", "voice", "stream"] {
+            assert!(!auto.needs_confirmation(scope), "{scope} must not ask");
+        }
+        assert!(auto.allows_word("voice", "join") && auto.allows_word("stream", "screen"));
+        for p in [Preset::ReadOnly, Preset::Assistant] {
+            let perms = preset_permissions(p);
+            assert!(perms.validate().is_ok());
+            assert!(perms.needs_confirmation("write") && perms.needs_confirmation("voice"));
+            assert!(perms.voice.is_empty() && perms.stream.is_empty());
+        }
+        assert!(preset_permissions(Preset::ReadOnly).write.is_empty());
+        assert_eq!(preset_permissions(Preset::Assistant).write, vec!["*"]);
     }
 }

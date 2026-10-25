@@ -5,6 +5,8 @@
 
 pub mod wizard;
 
+use crate::i18n::{self, tr, Lang};
+
 use anyhow::{anyhow, Result};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -69,6 +71,32 @@ pub enum Flow<R> {
 
 /// Шаги вверху экрана.
 pub const STEPS: [&str; 6] = ["Check", "Options", "Install", "Connect", "Agents", "Done"];
+const STEPS_RU: [&str; 6] = ["Проверка", "Параметры", "Установка", "Связь", "Агенты", "Готово"];
+
+/// Перевод всех кусков строки (экран перерисовывается каждый кадр, поэтому язык можно сменить на лету).
+pub fn tr_span(s: Span<'static>) -> Span<'static> {
+    let translated = tr(&s.content).into_owned();
+    Span::styled(translated, s.style)
+}
+
+pub fn tr_line(l: Line<'static>) -> Line<'static> {
+    let style = l.style;
+    let alignment = l.alignment;
+    let mut out = Line::from(l.spans.into_iter().map(tr_span).collect::<Vec<_>>()).style(style);
+    out.alignment = alignment;
+    out
+}
+
+pub fn tr_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    lines.into_iter().map(tr_line).collect()
+}
+
+/// Ctrl+L: переключает английский и русский, запоминает выбор. Следующий кадр уже на новом языке.
+fn toggle_language() {
+    let next = if i18n::current() == Lang::Ru { i18n::Choice::En } else { i18n::Choice::Ru };
+    i18n::set(next.resolve());
+    let _ = i18n::save(next);
+}
 
 pub struct Tui {
     term: Terminal<CrosstermBackend<Stdout>>,
@@ -162,6 +190,10 @@ impl Tui {
                     if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
                         return Err(anyhow!(Cancelled));
                     }
+                    if k.code == KeyCode::Char('l') && k.modifiers.contains(KeyModifiers::CONTROL) {
+                        toggle_language();
+                        continue;
+                    }
                     if let Flow::Done(r) = key(st, k) {
                         return Ok(r);
                     }
@@ -196,13 +228,13 @@ impl Tui {
                         .map(|(i, l)| {
                             if running && i + 1 == lines.len() {
                                 let mut spans =
-                                    vec![Span::styled(spinner(tick), bold(ACCENT)), Span::raw(format!(" {l}"))];
+                                    vec![Span::styled(spinner(tick), bold(ACCENT)), Span::raw(format!(" {}", tr(l)))];
                                 if !status.is_empty() {
-                                    spans.push(Span::styled(format!("  {status}"), dim()));
+                                    spans.push(Span::styled(format!("  {}", tr(&status)), dim()));
                                 }
                                 Line::from(spans)
                             } else {
-                                Line::from(vec![Span::styled("√", bold(OK)), Span::raw(format!(" {l}"))])
+                                Line::from(vec![Span::styled("√", bold(OK)), Span::raw(format!(" {}", tr(l)))])
                             }
                         })
                         .collect();
@@ -249,7 +281,7 @@ fn shell(f: &mut Frame, step: usize, title: &str, hints: &[(&str, &str)]) -> Rec
     let logo = Line::from(vec![
         Span::styled("◆ ", bold(ACCENT)),
         Span::styled("discordctl", bold(Color::White)),
-        Span::styled("  your Discord, from the terminal and your AI agents", dim()),
+        Span::styled(format!("  {}", tr("your Discord, from the terminal and your AI agents")), dim()),
     ]);
     f.render_widget(Paragraph::new(vec![Line::raw(""), logo]), head);
     f.render_widget(
@@ -258,7 +290,8 @@ fn shell(f: &mut Frame, step: usize, title: &str, hints: &[(&str, &str)]) -> Rec
     );
 
     let mut spans = vec![];
-    for (i, name) in STEPS.iter().enumerate() {
+    let steps = if i18n::current() == Lang::Ru { &STEPS_RU } else { &STEPS };
+    for (i, name) in steps.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled("  ──  ", fg(Color::Rgb(70, 74, 100))));
         }
@@ -276,15 +309,21 @@ fn shell(f: &mut Frame, step: usize, title: &str, hints: &[(&str, &str)]) -> Rec
     f.render_widget(block, body);
     // Заголовок экрана.
     let [title_area, content] = Layout::vertical([Constraint::Length(2), Constraint::Min(1)]).areas(inner);
-    f.render_widget(Paragraph::new(Span::styled(title.to_owned(), bold(Color::White))), title_area);
+    f.render_widget(Paragraph::new(Span::styled(tr(title).into_owned(), bold(Color::White))), title_area);
 
     let mut hint_spans = vec![];
     for (k, what) in hints {
         if !hint_spans.is_empty() {
             hint_spans.push(Span::styled("   ", dim()));
         }
-        hint_spans.push(Span::styled((*k).to_owned(), bold(ACCENT)));
-        hint_spans.push(Span::styled(format!(" {what}"), dim()));
+        hint_spans.push(Span::styled(tr(k).into_owned(), bold(ACCENT)));
+        hint_spans.push(Span::styled(format!(" {}", tr(what)), dim()));
+    }
+    // Смена языка доступна на любом экране, кроме «работаю…», где клавиши не читаются.
+    if !hints.iter().any(|(k, _)| *k == "wait") {
+        hint_spans.push(Span::styled("   ", dim()));
+        hint_spans.push(Span::styled("Ctrl+L", bold(ACCENT)));
+        hint_spans.push(Span::styled(if i18n::current() == Lang::Ru { " English" } else { " Русский" }, dim()));
     }
     f.render_widget(Paragraph::new(Line::from(hint_spans)), foot);
     content
@@ -435,7 +474,7 @@ pub fn panel(f: &mut Frame, area: Rect, title: &str, color: Color) -> Rect {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(fg(color))
-        .title(Span::styled(format!(" {title} "), bold(color)))
+        .title(Span::styled(format!(" {} ", tr(title)), bold(color)))
         .padding(ratatui::widgets::Padding::horizontal(1));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -443,7 +482,7 @@ pub fn panel(f: &mut Frame, area: Rect, title: &str, color: Color) -> Rect {
 }
 
 pub fn text(f: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    f.render_widget(Paragraph::new(tr_lines(lines)).wrap(Wrap { trim: false }), area);
 }
 
 /// Сколько строк займёт текст при данной ширине (для расчёта высоты рамок).

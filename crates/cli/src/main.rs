@@ -4,17 +4,23 @@ mod api;
 mod approve;
 mod cli;
 mod doctor;
+mod http;
+mod i18n;
+mod i18n_ru;
+mod i18n_ru_help;
 mod mcp;
 mod ops;
 mod render;
 mod setup;
 mod tui;
 mod ui;
+mod update;
 mod winsys;
+mod zipread;
 
 use anyhow::{bail, Context, Result};
 use api::{ask, out, owner_call, payload_call, T};
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, FromArgMatches};
 use cli::*;
 use discordctl_core::{
     client,
@@ -26,7 +32,18 @@ use discordctl_core::{
 use serde_json::{json, Value};
 
 fn main() {
-    let parsed = Cli::parse();
+    // Язык нужен до разбора аргументов: справка тоже печатается на выбранном языке.
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    i18n::set(i18n::detect(&args).resolve());
+    let mut command = Cli::command();
+    if i18n::current() == i18n::Lang::Ru {
+        command = i18n::localize_command(command);
+    }
+    let matches = command.get_matches_from(&args);
+    let parsed = match Cli::from_arg_matches(&matches) {
+        Ok(c) => c,
+        Err(e) => e.exit(),
+    };
     ui::init(parsed.no_color);
     if let Err(e) = run(parsed) {
         ui::print_error(&e);
@@ -77,7 +94,7 @@ fn run(cli: Cli) -> Result<()> {
                 } else {
                     ui::info("nothing to restore (the shim was not installed)");
                 }
-                ui::info(format!("daemon: {}", r["daemon"].as_str().unwrap_or("?")));
+                ui::info(format!("daemon: {}", i18n::tr(r["daemon"].as_str().unwrap_or("?"))));
                 if r["purged"] == true {
                     ui::ok(format!("data deleted: {}", r["data_dir"].as_str().unwrap_or("")));
                 } else {
@@ -89,6 +106,8 @@ fn run(cli: Cli) -> Result<()> {
             });
             Ok(())
         }
+        Cmd::Update(args) => update::run(args, json),
+        Cmd::Lang { value } => language(value, json),
         Cmd::Doctor { fix } => {
             if !doctor::run(json, fix)? {
                 std::process::exit(1);
@@ -108,6 +127,11 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Server { cmd: None | Some(ServerCmd::List) } => {
             let v = payload_call("guilds", json!({}))?;
             out(json, &v, || render::servers(&v));
+            Ok(())
+        }
+        Cmd::Server { cmd: Some(ServerCmd::Members { server, filter, limit }) } => {
+            let v = payload_call("members", json!({ "guild": server, "query": filter, "limit": limit }))?;
+            out(json, &v, || render::members(&v));
             Ok(())
         }
         Cmd::Channel { cmd: ChannelCmd::List { server } } => {
@@ -153,9 +177,18 @@ fn run(cli: Cli) -> Result<()> {
                 Ok(())
             }
         },
+        Cmd::Voice { cmd: VoiceCmd::Who { target, server } } => {
+            if target.is_none() && server.is_none() {
+                bail!("say which voice channel (`discordctl voice who Server/channel`) or `--server <name>`");
+            }
+            let v = payload_call("voice_who", json!({ "channel": target, "guild": server }))?;
+            out(json, &v, || render::voice_who(&v));
+            Ok(())
+        }
         Cmd::Voice { cmd } => {
             let (method, params) = match cmd {
                 VoiceCmd::Status => ("voice_status", json!({})),
+                VoiceCmd::Who { .. } => unreachable!("handled above"),
                 VoiceCmd::Join { target, ring, dry_run } => {
                     ("voice_join", json!({ "channel": target, "ring": ring, "dry_run": dry_run }))
                 }
@@ -232,6 +265,29 @@ fn run(cli: Cli) -> Result<()> {
             DevCmd::Reload { payload } => reload_payload(payload, json),
         },
     }
+}
+
+/// `discordctl lang [en|ru|auto]`: показать или сохранить язык интерфейса.
+fn language(value: Option<String>, json: bool) -> Result<()> {
+    use i18n::{Choice, Lang};
+    if let Some(v) = value {
+        let Some(choice) = Choice::parse(&v) else { bail!("unknown language {v:?}: use en, ru or auto") };
+        i18n::save(choice).context("saving the language")?;
+        i18n::set(choice.resolve());
+        out(
+            json,
+            &json!({ "lang": choice.word(), "effective": if i18n::current() == Lang::Ru { "ru" } else { "en" } }),
+            || ui::ok(format!("language set to {}", choice.word())),
+        );
+        return Ok(());
+    }
+    let (saved, now) = (i18n::saved(), i18n::current());
+    let name = if now == Lang::Ru { i18n::tr("Russian").into_owned() } else { "English".to_owned() };
+    out(json, &json!({ "lang": saved.word(), "effective": if now == Lang::Ru { "ru" } else { "en" } }), || {
+        ui::info(format!("language: {} ({})", saved.word(), name));
+        ui::hint("Change it with `discordctl lang ru|en|auto` (or --lang, or DISCORDCTL_LANG).");
+    });
+    Ok(())
 }
 
 fn message_read(a: ReadArgs, json: bool) -> Result<()> {
@@ -327,8 +383,7 @@ fn status(json: bool) -> Result<()> {
             }
         }
         let (u, s) = (shim::state(&root, Target::Update), shim::state(&root, Target::Stub));
-        let mark =
-            |st: shim::State| if st == shim::State::Installed { "installed".to_owned() } else { format!("{st:?}") };
+        let mark = |st: shim::State| i18n::tr(&format!("{st:?}")).into_owned();
         ui::info(format!("launcher: Update.exe {}, Discord.exe {}", mark(u), mark(s)));
     });
     Ok(())
@@ -367,11 +422,11 @@ fn app(cmd: AppCmd, json: bool) -> Result<()> {
             let token = r.data.as_ref().and_then(|d| d["token"].as_str()).unwrap_or("").to_owned();
             out(json, &json!({ "app": name, "token": token }), || {
                 ui::ok(format!("app {} created", ui::bold(&name)));
-                println!(
+                ui::say(format!(
                     "\nThe token is shown once. Give it to the app in the {} environment variable:\n\n  {}\n",
                     ui::bold("DISCORDCTL_TOKEN"),
                     ui::green(&token)
-                );
+                ));
                 ui::hint(format!("Revoke any time: discordctl app remove {name}"));
             });
             Ok(())

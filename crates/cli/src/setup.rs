@@ -81,14 +81,14 @@ fn run_plain(a: SetupArgs) -> Result<()> {
     let running = ops::discord_running(&root);
 
     println!();
-    println!("discordctl will:");
-    println!("  {} copy its programs to {}", ui::cyan("•"), ui::dim(paths::bin_dir().display().to_string()));
-    println!(
+    ui::say("discordctl will:");
+    ui::say(format!("  {} copy its programs to {}", ui::cyan("•"), ui::dim(paths::bin_dir().display().to_string())));
+    ui::say(format!(
         "  {} put a small launcher in front of {} and {} (originals stay next to them as *.real.exe)",
         ui::cyan("•"),
         ui::bold("Update.exe"),
         ui::bold("Discord.exe")
-    );
+    ));
     println!("  {}", ui::dim("Everything is reverted by `discordctl uninstall`. The launcher always falls back to the real Discord if something fails."));
     if !yes && !ui::confirm("Continue?", true)? {
         bail!("cancelled");
@@ -195,8 +195,8 @@ fn run_plain(a: SetupArgs) -> Result<()> {
     }
 
     println!("\n{}", ui::bold("All set. Try:"));
-    println!("  {}   list your chats", ui::cyan("discordctl chat"));
-    println!("  {}   read the last messages", ui::cyan("discordctl read @name -n 20"));
-    println!("  {}   check the installation any time\n", ui::cyan("discordctl doctor"));
+    ui::say(format!("  {}   list your chats", ui::cyan("discordctl chat")));
+    ui::say(format!("  {}   read the last messages", ui::cyan("discordctl read @name -n 20")));
+    ui::say(format!("  {}   check the installation any time\n", ui::cyan("discordctl doctor")));
     Ok(())
 }

@@ -49,6 +49,17 @@ add the folder %LOCALAPPDATA%\\discordctl and the folder with discordctl.exe to 
 (Kaspersky: Settings > Protection > Threats and exclusions > Manage exclusions), then run `discordctl doctor --fix`. \
 The files are unsigned and hook into another program's launch, which antivirus heuristics dislike; you can also send them to the vendor as a false positive.";
 
+/// Команда автозапуска запускает корневую заглушку `<root>\Discord.exe` (а не `app-*\Discord.exe`).
+fn runs_root_stub(command: &str, root: &std::path::Path) -> bool {
+    let c = command.trim();
+    let exe = match c.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(""),
+        None => c.split_whitespace().next().unwrap_or(""),
+    };
+    let stub = root.join("Discord.exe");
+    exe.trim().eq_ignore_ascii_case(&stub.to_string_lossy())
+}
+
 /// Все проверки. `fix` чинит безопасное по ходу дела; печатью занимается вызывающий.
 pub fn collect(fix: bool) -> Result<(Vec<Check>, Vec<String>)> {
     let cfg = Config::load();
@@ -187,6 +198,10 @@ pub fn collect(fix: bool) -> Result<(Vec<Check>, Vec<String>)> {
     // --- автозапуск
     match winsys::run_key_discord() {
         Some(v) if v.to_lowercase().contains("update.exe") => checks.push(c("autostart", Level::Ok, "Run key starts Discord through Update.exe (the shim)", None)),
+        // Новые сборки Discord пишут в автозапуск корневую заглушку `<root>\Discord.exe`: на ней тоже стоит шим.
+        Some(v) if runs_root_stub(&v, &root) && shim::state(&root, Target::Stub) == State::Installed => {
+            checks.push(c("autostart", Level::Ok, "Run key starts Discord through the root Discord.exe (the shim)", None))
+        }
         Some(v) => checks.push(c("autostart", Level::Warn, format!("Run key is {v}"), Some("Autostart bypasses discordctl. Re-enable 'Open Discord' in Discord's settings, or it starts without the pipe."))),
         None => checks.push(c("autostart", Level::Info, "Discord is not set to start with Windows", None)),
     }
@@ -310,7 +325,8 @@ pub fn run(json_out: bool, fix: bool) -> Result<bool> {
                 Level::Warn => console::style("!").yellow().bold(),
                 Level::Fail => console::style("×").red().bold(),
             };
-            println!("{mark} {:<22} {}", console::style(x.name).bold(), x.detail);
+            let name = crate::i18n::pad(&crate::i18n::tr(x.name), crate::i18n::col(22));
+            println!("{mark} {} {}", console::style(name).bold(), crate::i18n::tr(&x.detail));
             if let (true, Some(h)) = (x.level >= Level::Warn || x.name == "antivirus", &x.hint) {
                 ui::hint(h);
             }
@@ -359,5 +375,21 @@ fn broken_parts(v: &Value) -> String {
         "self-check reported a problem".into()
     } else {
         parts.join("; ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runs_root_stub;
+    use std::path::Path;
+
+    #[test]
+    fn autostart_through_the_root_stub_is_recognised() {
+        let root = Path::new(r"C:\Users\PC\AppData\Local\Discord");
+        assert!(runs_root_stub(r#""C:\Users\PC\AppData\Local\Discord\Discord.exe" --processStart Discord.exe"#, root));
+        assert!(runs_root_stub(r#""c:\users\pc\appdata\local\discord\discord.exe""#, root));
+        // Обход шима: exe внутри app-* или чужая установка.
+        assert!(!runs_root_stub(r#""C:\Users\PC\AppData\Local\Discord\app-1.0.9265\Discord.exe""#, root));
+        assert!(!runs_root_stub(r#""C:\Users\PC\AppData\Local\DiscordPTB\Discord.exe""#, root));
     }
 }

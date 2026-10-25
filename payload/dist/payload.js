@@ -194,6 +194,41 @@
     const map = call("ChannelStore", "getMutableGuildChannelsForGuild", guildId);
     return Object.values(map).sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
   }
+  var MEMBERS_DEFAULT = 100;
+  var MEMBERS_MAX = 500;
+  function members(p) {
+    const g = resolveGuild(p.guild);
+    const gid = String(g.id);
+    const raw = call("GuildMemberStore", "getMembers", gid) ?? [];
+    let total = null;
+    try {
+      const n = call("GuildMemberCountStore", "getMemberCount", gid);
+      total = typeof n === "number" ? n : null;
+    } catch {
+    }
+    let roleNames = {};
+    try {
+      const roles = call("GuildStore", "getRoles", gid) ?? {};
+      roleNames = Object.fromEntries(Object.entries(roles).map(([id, r]) => [id, String(r.name ?? id)]));
+    } catch {
+    }
+    const q = norm(p.query ?? "");
+    const all = raw.map((m) => {
+      const u = call("UserStore", "getUser", m.userId);
+      const brief = userBrief(u) ?? { id: String(m.userId), username: null, display_name: null, bot: false };
+      const roles = (m.roles ?? []).map((id) => roleNames[id] ?? id);
+      return { ...brief, nickname: m.nick ?? null, roles: roles.slice(0, 10), joined_at: m.joinedAt ?? null };
+    }).filter((m) => !q || [m.display_name, m.username, m.nickname].some((n) => n && norm(String(n)).includes(q))).sort((a, b) => String(a.nickname ?? a.display_name).localeCompare(String(b.nickname ?? b.display_name)));
+    const limit = Math.min(Math.max(1, Math.floor(p.limit ?? MEMBERS_DEFAULT) || MEMBERS_DEFAULT), MEMBERS_MAX);
+    return {
+      guild: { id: gid, name: String(g.name) },
+      loaded: raw.length,
+      total_members: total,
+      matched: all.length,
+      truncated: all.length > limit,
+      members: all.slice(0, limit)
+    };
+  }
   function channels(guildQuery) {
     const g = resolveGuild(guildQuery);
     const all = guildChannels(String(g.id));
@@ -640,6 +675,24 @@
       };
     });
   }
+  function voiceWho(p) {
+    if (p.channel) {
+      const ch = resolveChannel(p.channel, { voice: true });
+      const info = describeChannel(ch);
+      if (!VOICE_KINDS.has(ch.type)) throw new Error(`${info.kind} "${info.name}" is not a voice channel`);
+      return { channel: info, participants: participants(String(ch.id)) };
+    }
+    if (!p.guild) throw new Error("give a voice channel (Server/channel) or a server name");
+    const g = resolveGuild(p.guild);
+    const voice = guildChannels(String(g.id)).filter((c) => c.type === 2 || c.type === 13);
+    const occupied = voice.map((c) => ({ channel: describeChannel(c), participants: participants(String(c.id)) })).filter((c) => c.participants.length > 0);
+    return {
+      guild: { id: String(g.id), name: String(g.name) },
+      voice_channels: voice.length,
+      people_in_voice: occupied.reduce((n, c) => n + c.participants.length, 0),
+      channels: occupied
+    };
+  }
   function voiceStatus() {
     const channelId = store("SelectedChannelStore", "getVoiceChannelId") ?? store("RTCConnectionStore", "getChannelId") ?? null;
     const ch = channelId ? store("ChannelStore", "getChannel", channelId) : null;
@@ -922,6 +975,15 @@
     stream_start: (p) => startStream({ source: String(p.source ?? ""), audio: p.audio === true, dry_run: p.dry_run === true }),
     stream_stop: (p) => stopStream({ dry_run: p.dry_run === true }),
     voice_status: () => voiceStatus(),
+    voice_who: (p) => voiceWho({
+      channel: p.channel == null ? void 0 : String(p.channel),
+      guild: p.guild == null ? void 0 : String(p.guild)
+    }),
+    members: (p) => members({
+      guild: String(p.guild ?? ""),
+      query: p.query == null ? void 0 : String(p.query),
+      limit: p.limit == null ? void 0 : Number(p.limit)
+    }),
     voice_join: (p) => joinVoice({ channel: String(p.channel ?? ""), ring: p.ring === true, dry_run: p.dry_run === true }),
     voice_leave: (p) => leaveVoice({ dry_run: p.dry_run === true }),
     voice_mute: (p) => setMute(p.mute !== false, p.dry_run === true),

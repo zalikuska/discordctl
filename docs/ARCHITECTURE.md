@@ -72,7 +72,7 @@ manifest of rights:
 - areas: `list`, `read`, `write`, `voice` (+ `voice_channels`), `stream`; `read` does not imply `write`;
 - the daemon resolves the target itself, checks **that id**, and executes with **that id** (no check/use gap);
 - `write`, `voice` and `stream` calls wait for a human answer (`discordctl app approve`) with the exact text or window
-  title shown; silence for two minutes is a refusal;
+  title shown; silence for 55 seconds is a refusal (agent clients give up after about a minute);
 - tokens are 256-bit random values, only their SHA-256 is stored; revocation is immediate and also cancels waiting calls;
 - an audit log records decisions (never message text).
 
