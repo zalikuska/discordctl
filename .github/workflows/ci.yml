@@ -3,7 +3,14 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**", "LICENSE", "examples/**"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "LICENSE", "examples/**"]
+
+# A newer push to the same branch makes the unfinished run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -20,6 +27,12 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # One cache for CI and Release (otherwise each job builds everything from scratch). Only main writes it:
+          # a tag or a pull request gets its own copy that nobody else could use. A failed run still keeps what it built.
+          shared-key: windows
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo build --release
