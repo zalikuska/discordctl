@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 - 2026-10-25
 
 - MCP: the daemon itself keeps only the declared fields of an app's call (no `mentions`, `ring` or `audio`, history
   pages capped), so "no pings" no longer depends on the MCP server being the one that talks to it.
@@ -22,6 +22,8 @@
 - `Config` is written atomically; closing Discord no longer matches `DiscordPTB`/`Discord2` folders by name prefix
   (also in `install.ps1`); `install.ps1` waits for the Discord app folder, not just `Update.exe`, before continuing.
 - Non-ASCII user names no longer break reading the Discord folder from the uninstall entry.
+- The check and cross marks in the wizard and `doctor` are single-cell glyphs now: the old ones were drawn as wide
+  emoji in Windows Terminal and broke the alignment of the `[x]` toggles.
 
 ## 0.1.1 - 2026-10-25
 
