@@ -7,7 +7,11 @@
 
 #![windows_subsystem = "windows"]
 
-use discordctl_core::{args, client, paths, protocol::Request, shim::SHIM_MARKER};
+use discordctl_core::{
+    args, client, paths,
+    protocol::Request,
+    shim::{self, SHIM_MARKER},
+};
 use std::{
     env,
     ffi::OsString,
@@ -31,6 +35,11 @@ fn managed_launch(extra: Vec<String>) -> Result<(), String> {
 }
 
 fn forward(real: &PathBuf, args: &[OsString]) -> ExitCode {
+    // Страховка от бесконечной рекурсии: если «настоящий» файл сам шим, запуск порождал бы копии без конца.
+    if shim::has_marker(real) {
+        log(&format!("refusing to run {}: it is a shim, not the real file", real.display()));
+        return ExitCode::from(1);
+    }
     match Command::new(real).args(args).status() {
         Ok(s) => ExitCode::from(s.code().unwrap_or(1).clamp(0, 255) as u8),
         Err(e) => {

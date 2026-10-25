@@ -64,7 +64,7 @@ pub enum State {
     Installed,
     /// `*.real.exe` есть, но основной файл снова настоящий: его перезаписал апдейтер.
     NeedsRepair,
-    /// Шим есть, а настоящего `*.real.exe` нет: через него Discord не запустить.
+    /// Шим есть, а настоящего `*.real.exe` нет или вместо него лежит другой шим: Discord через него не запустить.
     Broken,
     /// Основной файл отсутствует.
     Missing,
@@ -76,6 +76,8 @@ pub fn state(root: &Path, t: Target) -> State {
         return State::Missing;
     }
     match (has_marker(&main), real.is_file()) {
+        // `*.real.exe` сам оказался шимом (старая сборка, поставленная поверх себя): запуск через него зациклился бы.
+        (true, true) if has_marker(&real) => State::Broken,
         (true, true) => State::Installed,
         (true, false) => State::Broken,
         (false, true) => State::NeedsRepair,
@@ -107,7 +109,10 @@ pub fn place(root: &Path, t: Target, shim_src: &Path) -> Result<bool> {
     match state(root, t) {
         State::Missing => bail!("{} not found: is Discord installed here?", main.display()),
         State::Broken => {
-            bail!("shim is in place but {} is missing; reinstall Discord or restore the file", real.display())
+            bail!(
+                "shim is in place but {} is missing or is itself a shim; reinstall Discord or restore the file",
+                real.display()
+            )
         }
         State::Installed => {
             // Обновляем сам шим, если сборка новее.
@@ -143,7 +148,12 @@ pub fn remove(root: &Path, t: Target) -> Result<bool> {
             move_aside(&real)?;
             Ok(true)
         }
-        State::Broken => bail!("shim is in place but {} is missing; cannot restore automatically", real.display()),
+        State::Broken => {
+            bail!(
+                "shim is in place but {} is missing or is itself a shim; cannot restore automatically",
+                real.display()
+            )
+        }
         State::Installed => {
             move_aside(&main)?;
             fs::rename(&real, &main).with_context(|| format!("restoring {}", t.real_file()))?;
@@ -159,5 +169,24 @@ pub fn repair(root: &Path, t: Target, shim_src: &Path) -> Result<bool> {
         place(root, t, shim_src)
     } else {
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_shim_in_place_of_the_real_file_is_broken() {
+        let dir = std::env::temp_dir().join(format!("dctl-shim-state-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let shim_bytes = format!("MZ..{SHIM_MARKER}..");
+        fs::write(Target::Update.path(&dir), &shim_bytes).unwrap();
+        fs::write(Target::Update.real_path(&dir), "MZ real squirrel").unwrap();
+        assert_eq!(state(&dir, Target::Update), State::Installed);
+        // Старая сборка шима, оказавшаяся на месте `Update.real.exe`: через неё запуск зациклится.
+        fs::write(Target::Update.real_path(&dir), &shim_bytes).unwrap();
+        assert_eq!(state(&dir, Target::Update), State::Broken);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

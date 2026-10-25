@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The launcher refuses to start a `*.real.exe` that is itself a launcher (it used to re-spawn itself without end), and
+  `doctor`/`install` report such an install as broken.
+
 ## 0.1.0 - 2026-10-25
 
 First public version.
