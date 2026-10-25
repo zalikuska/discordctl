@@ -28,7 +28,31 @@ fn wait_hook(spinner: &mut ui::Spinner, secs: u64) -> bool {
     false
 }
 
+/// Полноэкранный мастер, если есть терминал; с `--yes`, `--plain` или без терминала — построчные вопросы.
 pub fn run(a: SetupArgs) -> Result<()> {
+    if !a.yes && !a.plain && ui::interactive() {
+        let s = crate::tui::wizard::run(&a)?;
+        if s.attached {
+            ui::ok("discordctl is installed and attached to Discord");
+        } else {
+            ui::warn(
+                "discordctl is installed; close Discord completely (also from the tray) and start it again to attach",
+            );
+        }
+        if !s.agents.is_empty() {
+            ui::ok(format!("connected: {}", s.agents.join(", ")));
+        }
+        ui::info(format!(
+            "try {}  ·  check anything with {}",
+            ui::bold("discordctl chat"),
+            ui::bold("discordctl doctor")
+        ));
+        return Ok(());
+    }
+    run_plain(a)
+}
+
+fn run_plain(a: SetupArgs) -> Result<()> {
     ui::banner();
     let yes = a.yes;
     if !yes && !ui::interactive() {

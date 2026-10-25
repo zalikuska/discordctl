@@ -221,6 +221,9 @@ pub struct SetupArgs {
     /// Do not offer to restart a running Discord
     #[arg(long)]
     pub no_restart: bool,
+    /// Use plain questions instead of the full-screen interface
+    #[arg(long)]
+    pub plain: bool,
     /// Discord install folder (default: %LOCALAPPDATA%\Discord)
     #[arg(long)]
     pub root: Option<PathBuf>,

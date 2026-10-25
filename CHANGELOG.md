@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `setup` is now a full-screen wizard (arrow keys, Space to toggle, Enter to confirm): system check, options,
+  installation, connecting to Discord (with a one-key restart if Discord did not attach), choosing AI agents and rights,
+  and a result page. `--yes`, `--plain` or a missing terminal keep the old line-by-line mode.
+- Yes/no questions read key presses (Unicode) instead of bytes: Cyrillic `д`/`н` no longer ends with
+  "stream did not contain valid UTF-8".
+- `tests/tui-sandbox.ps1` runs the wizard against a fake Discord; `DISCORDCTL_TUI_KEYS` plays key presses for checks.
+
 - `setup`/`install` find Discord in the registry uninstall entry when it is not in `%LOCALAPPDATA%\Discord`, and say so
   when only PTB or Canary is installed.
 - `install.ps1` offers to download and run the official Discord installer (signature checked) when Discord is missing,

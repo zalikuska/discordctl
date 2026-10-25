@@ -49,7 +49,8 @@ add the folder %LOCALAPPDATA%\\discordctl and the folder with discordctl.exe to 
 (Kaspersky: Settings > Protection > Threats and exclusions > Manage exclusions), then run `discordctl doctor --fix`. \
 The files are unsigned and hook into another program's launch, which antivirus heuristics dislike; you can also send them to the vendor as a false positive.";
 
-pub fn run(json_out: bool, fix: bool) -> Result<bool> {
+/// Все проверки. `fix` чинит безопасное по ходу дела; печатью занимается вызывающий.
+pub fn collect(fix: bool) -> Result<(Vec<Check>, Vec<String>)> {
     let cfg = Config::load();
     let root = cfg.root();
     let mut checks: Vec<Check> = vec![];
@@ -285,6 +286,11 @@ pub fn run(json_out: bool, fix: bool) -> Result<bool> {
         }
     }
 
+    Ok((checks, fixed))
+}
+
+pub fn run(json_out: bool, fix: bool) -> Result<bool> {
+    let (checks, fixed) = collect(fix)?;
     let worst = checks.iter().map(|x| x.level).max().unwrap_or(Level::Ok);
     if json_out {
         let items: Vec<Value> = checks

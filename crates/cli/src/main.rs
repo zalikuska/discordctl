@@ -8,6 +8,7 @@ mod mcp;
 mod ops;
 mod render;
 mod setup;
+mod tui;
 mod ui;
 mod winsys;
 

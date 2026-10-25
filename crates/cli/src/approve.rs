@@ -14,8 +14,7 @@ use discordctl_core::permissions::{valid_resource_pattern, Permissions};
 use serde_json::{json, Value};
 use std::{
     collections::HashSet,
-    fs::File,
-    io::{BufRead, BufReader, IsTerminal, Write},
+    io::{IsTerminal, Write},
     time::Duration,
 };
 
@@ -26,19 +25,43 @@ pub fn require_terminal() -> Result<()> {
     Ok(())
 }
 
-/// Вопрос человеку. Пустой ответ — значение по умолчанию.
+/// Вопрос человеку: одна клавиша, без Enter. Читаются нажатия клавиш консоли (Unicode), а не байты stdin:
+/// так работают русская раскладка (д/н) и любая кодовая страница.
 pub fn ask(question: &str, default_yes: bool) -> Result<bool> {
-    let mut input = BufReader::new(File::open("CONIN$").context("cannot open the console for input")?);
-    loop {
-        print!("{} {} ", question, ui::dim(if default_yes { "[Y/n]" } else { "[y/N]" }));
-        std::io::stdout().flush()?;
-        let mut line = String::new();
-        input.read_line(&mut line)?;
-        match line.trim().to_lowercase().as_str() {
-            "" => return Ok(default_yes),
-            "y" | "yes" | "д" | "да" => return Ok(true),
-            "n" | "no" | "н" | "нет" => return Ok(false),
-            _ => println!("answer y or n"),
+    use crossterm::{
+        event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+        terminal,
+    };
+    require_terminal()?;
+    print!("{} {} ", question, ui::dim(if default_yes { "[Y/n]" } else { "[y/N]" }));
+    std::io::stdout().flush()?;
+    terminal::enable_raw_mode().context("cannot open the console for input")?;
+    let answer = loop {
+        let Event::Key(k) = event::read().context("cannot read from the console")? else { continue };
+        if k.kind != KeyEventKind::Press {
+            continue;
+        }
+        match k.code {
+            KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => break None,
+            KeyCode::Enter => break Some(default_yes),
+            KeyCode::Esc => break Some(false),
+            KeyCode::Char(c) => match c.to_lowercase().next().unwrap_or(c) {
+                'y' | 'д' => break Some(true),
+                'n' | 'н' => break Some(false),
+                _ => {}
+            },
+            _ => {}
+        }
+    };
+    let _ = terminal::disable_raw_mode();
+    match answer {
+        Some(yes) => {
+            println!("{}", if yes { "yes" } else { "no" });
+            Ok(yes)
+        }
+        None => {
+            println!();
+            bail!("cancelled")
         }
     }
 }

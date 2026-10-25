@@ -39,7 +39,7 @@ cargo build --release
 .\target\release\discordctl.exe setup
 ```
 
-`setup` walks through five steps: checks your Discord, installs a small launcher in front of `Update.exe` and
+`setup` opens a full-screen wizard (arrows, Space, Enter; `--plain` for simple questions) with five steps: checks your Discord, installs a small launcher in front of `Update.exe` and
 `Discord.exe` (originals are kept), starts Discord under discordctl, runs a health check, and offers to connect an AI
 agent. Everything is reversible with `discordctl uninstall`.
 

@@ -73,7 +73,7 @@ pub fn detected(a: AgentKind) -> bool {
     }
 }
 
-const ALL: [AgentKind; 4] = [AgentKind::ClaudeCode, AgentKind::ClaudeDesktop, AgentKind::Cursor, AgentKind::Print];
+pub const ALL: [AgentKind; 4] = [AgentKind::ClaudeCode, AgentKind::ClaudeDesktop, AgentKind::Cursor, AgentKind::Print];
 
 // ---- запуск claude -------------------------------------------------------------------------------------------
 
@@ -212,6 +212,31 @@ fn register(a: AgentKind, token: &str) -> Result<String> {
             Ok("printed above".into())
         }
     }
+}
+
+/// Подключение агента без вопросов и печати (экран мастера сам показал права и получил согласие).
+/// Возвращает, как зарегистрировано, и текст настроек для агентов, которых мы не трогаем сами.
+pub fn connect_quiet(a: AgentKind, perms: &Permissions) -> Result<(String, Option<String>)> {
+    require_installed()?;
+    let app = app_name(a);
+    let r = owner_call(&Request::AuthGrant { name: app.to_owned(), permissions: perms.clone() })?;
+    let token = r.data.and_then(|d| d["token"].as_str().map(str::to_owned)).context("the daemon returned no token")?;
+    let result = match a {
+        AgentKind::Print => Ok((
+            "config to paste".to_owned(),
+            Some(format!(
+                "{}\n\nor, for Claude Code:\n  claude mcp add {SERVER} -s user -e DISCORDCTL_TOKEN={token} -- \"{}\"",
+                serde_json::to_string_pretty(&json!({ "mcpServers": { SERVER: server_entry(&token) } }))?,
+                mcp_exe().display()
+            )),
+        )),
+        _ => register(a, &token).map(|how| (how, None)),
+    };
+    if result.is_err() {
+        // Токен без записи в настройки никому не нужен: отзываем, чтобы не оставлять мёртвое приложение.
+        let _ = owner_call(&Request::AuthRevoke { name: app.to_owned() });
+    }
+    result
 }
 
 pub fn install(mut agents: Vec<AgentKind>, preset: Preset, json_mode: bool) -> Result<()> {
